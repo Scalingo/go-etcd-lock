@@ -29,3 +29,12 @@ if err != nil {
   panic(err)
 }
 ```
+
+Testing
+-------
+
+You need a etcd instance running on `localhost:4001`, then:
+
+```
+go test ./...
+```
