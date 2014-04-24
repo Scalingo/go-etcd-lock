@@ -9,6 +9,20 @@ This library doesn't provide the `*etcd.Client` because it doesn't want to
 manage the condfiguration of it (TLS or not, endpoints etc.) So a client has to
 exist previously
 
+Import
+------
+
+```
+# Master via standard import
+get get github.com/Appsdeck/go-etcd-lock
+
+# Last stable is v0 via gopkg.in
+go get gopkg.in/Appsdeck/go-etcd-lock.v0/lock
+```
+
+Example
+-------
+
 ```go
 l, err := lock.Acquire(client, "/name", 60)
 if lockErr, ok := err.(*lock.Error); ok {
