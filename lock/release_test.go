@@ -29,4 +29,10 @@ func TestRelease(t *testing.T) {
 		err := lock.Release()
 		So(err, ShouldBeNil)
 	})
+
+	Convey("Release a nil lock should not panic", t, func() {
+		var lock *Lock
+		err := lock.Release()
+		So(err, ShouldNotBeNil)
+	})
 }
