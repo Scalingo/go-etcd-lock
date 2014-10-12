@@ -6,7 +6,7 @@ import (
 	"sort"
 
 	"github.com/coreos/go-etcd/etcd"
-	"github.com/juju/errgo"
+	"gopkg.in/errgo.v1"
 )
 
 type Error struct {

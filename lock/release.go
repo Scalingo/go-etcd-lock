@@ -1,6 +1,8 @@
 package lock
 
-import "github.com/juju/errgo"
+import (
+	"gopkg.in/errgo.v1"
+)
 
 func (l *Lock) Release() error {
 	if l == nil {

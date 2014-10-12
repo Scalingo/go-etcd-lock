@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/juju/errgo"
 	. "github.com/smartystreets/goconvey/convey"
+	"gopkg.in/errgo.v1"
 )
 
 func TestAcquire(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"sort"
 
 	"github.com/coreos/go-etcd/etcd"
-	"github.com/juju/errgo"
+	"gopkg.in/errgo.v1"
 )
 
 func Wait(client *etcd.Client, key string) error {
