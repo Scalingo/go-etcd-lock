@@ -67,7 +67,7 @@ func acquire(client *etcd.Client, key string, ttl uint64, wait bool) (*Lock, err
 		}
 	}
 
-	// If weget the lock, set the ttl and return it
+	// If we get the lock, set the ttl and return it
 	_, err = client.Update(lock.Node.Key, lock.Node.Value, ttl)
 	if err != nil {
 		return nil, errgo.Mask(err)
