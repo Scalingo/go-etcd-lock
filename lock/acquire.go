@@ -17,21 +17,38 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("key is already locked by %s", e.hostname)
 }
 
-type Lock struct {
+type Locker interface {
+	Acquire(key string, ttl uint64) (Lock, error)
+	WaitAcquire(key string, ttl uint64) (Lock, error)
+}
+
+type EtcdLocker struct {
+	client *etcd.Client
+}
+
+func NewEtcdLocker(client *etcd.Client) Locker {
+	return &EtcdLocker{client: client}
+}
+
+type Lock interface {
+	Release() error
+}
+
+type EtcdLock struct {
 	client *etcd.Client
 	key    string
 	index  uint64
 }
 
-func Acquire(client *etcd.Client, key string, ttl uint64) (*Lock, error) {
-	return acquire(client, key, ttl, false)
+func (locker *EtcdLocker) Acquire(key string, ttl uint64) (Lock, error) {
+	return acquire(locker.client, key, ttl, false)
 }
 
-func WaitAcquire(client *etcd.Client, key string, ttl uint64) (*Lock, error) {
-	return acquire(client, key, ttl, true)
+func (locker *EtcdLocker) WaitAcquire(key string, ttl uint64) (Lock, error) {
+	return acquire(locker.client, key, ttl, true)
 }
 
-func acquire(client *etcd.Client, key string, ttl uint64, wait bool) (*Lock, error) {
+func acquire(client *etcd.Client, key string, ttl uint64, wait bool) (Lock, error) {
 	hasLock := false
 	key = addPrefix(key)
 	lock, err := addLockDirChild(client, key)
@@ -73,7 +90,7 @@ func acquire(client *etcd.Client, key string, ttl uint64, wait bool) (*Lock, err
 		return nil, errgo.Mask(err)
 	}
 
-	return &Lock{client, lock.Node.Key, lock.Node.CreatedIndex}, nil
+	return &EtcdLock{client, lock.Node.Key, lock.Node.CreatedIndex}, nil
 }
 
 func addLockDirChild(client *etcd.Client, key string) (*etcd.Response, error) {
