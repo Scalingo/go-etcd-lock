@@ -60,6 +60,23 @@ func (locker *MockLocker) WaitAcquire(path string, ttl uint64) (Lock, error) {
 	return lock, nil
 }
 
+func (locker *MockLocker) Wait(path string) error {
+	locker.Lock()
+	defer locker.Unlock()
+
+	l, ok := locker.locks[path]
+	if !ok {
+		return nil
+	}
+
+	if l.locked {
+		l.mutex.Lock()
+		l.mutex.Unlock()
+	}
+
+	return nil
+}
+
 func (lock *MockLock) Release() error {
 	lock.locked = false
 	lock.mutex.Unlock()

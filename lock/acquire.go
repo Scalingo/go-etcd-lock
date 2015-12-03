@@ -20,6 +20,7 @@ func (e *Error) Error() string {
 type Locker interface {
 	Acquire(key string, ttl uint64) (Lock, error)
 	WaitAcquire(key string, ttl uint64) (Lock, error)
+	Wait(key string) error
 }
 
 type EtcdLocker struct {
@@ -41,14 +42,14 @@ type EtcdLock struct {
 }
 
 func (locker *EtcdLocker) Acquire(key string, ttl uint64) (Lock, error) {
-	return acquire(locker.client, key, ttl, false)
+	return locker.acquire(locker.client, key, ttl, false)
 }
 
 func (locker *EtcdLocker) WaitAcquire(key string, ttl uint64) (Lock, error) {
-	return acquire(locker.client, key, ttl, true)
+	return locker.acquire(locker.client, key, ttl, true)
 }
 
-func acquire(client *etcd.Client, key string, ttl uint64, wait bool) (Lock, error) {
+func (locker *EtcdLocker) acquire(client *etcd.Client, key string, ttl uint64, wait bool) (Lock, error) {
 	hasLock := false
 	key = addPrefix(key)
 	lock, err := addLockDirChild(client, key)
@@ -69,7 +70,7 @@ func acquire(client *etcd.Client, key string, ttl uint64, wait bool) (Lock, erro
 					client.Delete(lock.Node.Key, false)
 					return nil, &Error{res.Node.Nodes[0].Value}
 				} else {
-					err = Wait(client, lock.Node.Key)
+					err = locker.Wait(lock.Node.Key)
 					if err != nil {
 						return nil, errgo.Mask(err)
 					}
