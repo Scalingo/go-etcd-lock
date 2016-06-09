@@ -4,7 +4,7 @@ import (
 	"log"
 	"net"
 
-	"github.com/coreos/go-etcd/etcd"
+	ect "github.com/coreos/etcd/client"
 )
 
 func init() {
@@ -15,6 +15,7 @@ func init() {
 	s.Close()
 }
 
-func client() *etcd.Client {
-	return etcd.NewClient([]string{"http://localhost:4001"})
+func client() *ect.Client {
+	client, _ := ect.New(ect.Config{Endpoints: []string{"http://localhost:4001"}})
+	return &client
 }

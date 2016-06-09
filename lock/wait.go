@@ -1,21 +1,22 @@
 package lock
 
 import (
-	"sort"
-
-	"github.com/coreos/go-etcd/etcd"
+	ect "github.com/coreos/etcd/client"
+	"golang.org/x/net/context"
 	"gopkg.in/errgo.v1"
+	"sort"
 )
 
 func (locker *EtcdLocker) Wait(key string) error {
 	key = addPrefix(key)
+	kapi := ect.NewKeysAPI(*locker.client)
+	ctx := context.Background()
 
 	for {
-		res, err := locker.client.Get(key, true, true)
+		res, err := kapi.Get(ctx, key, &ect.GetOptions{Recursive: true, Sort: true})
 		if err != nil {
-			etcdErr, ok := err.(*etcd.EtcdError)
 			// if key not found, lock is free
-			if ok && etcdErr.ErrorCode == 100 {
+			if ect.IsKeyNotFound(err) {
 				break
 			}
 			return errgo.Mask(err)
@@ -28,7 +29,8 @@ func (locker *EtcdLocker) Wait(key string) error {
 		sort.Sort(res.Node.Nodes)
 		currentLock := res.Node.Nodes[0]
 
-		_, err = locker.client.Watch(currentLock.Key, currentLock.CreatedIndex, false, nil, nil)
+		watcher := kapi.Watcher(currentLock.Key, &ect.WatcherOptions{AfterIndex: currentLock.CreatedIndex, Recursive: false})
+		_, err = watcher.Next(ctx)
 		if err != nil {
 			return errgo.Mask(err)
 		}
