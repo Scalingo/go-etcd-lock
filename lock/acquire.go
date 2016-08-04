@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"time"
 
-	"github.com/coreos/go-etcd/etcd"
+	"golang.org/x/net/context"
+
+	etcd "github.com/coreos/etcd/client"
 	"gopkg.in/errgo.v1"
 )
 
@@ -24,11 +27,12 @@ type Locker interface {
 }
 
 type EtcdLocker struct {
-	client *etcd.Client
+	kapi   etcd.KeysAPI
+	client etcd.Client
 }
 
-func NewEtcdLocker(client *etcd.Client) Locker {
-	return &EtcdLocker{client: client}
+func NewEtcdLocker(client etcd.Client) Locker {
+	return &EtcdLocker{kapi: etcd.NewKeysAPI(client), client: client}
 }
 
 type Lock interface {
@@ -36,29 +40,29 @@ type Lock interface {
 }
 
 type EtcdLock struct {
-	client *etcd.Client
-	key    string
-	index  uint64
+	kapi  etcd.KeysAPI
+	key   string
+	index uint64
 }
 
 func (locker *EtcdLocker) Acquire(key string, ttl uint64) (Lock, error) {
-	return locker.acquire(locker.client, key, ttl, false)
+	return locker.acquire(locker.kapi, key, ttl, false)
 }
 
 func (locker *EtcdLocker) WaitAcquire(key string, ttl uint64) (Lock, error) {
-	return locker.acquire(locker.client, key, ttl, true)
+	return locker.acquire(locker.kapi, key, ttl, true)
 }
 
-func (locker *EtcdLocker) acquire(client *etcd.Client, key string, ttl uint64, wait bool) (Lock, error) {
+func (locker *EtcdLocker) acquire(kapi etcd.KeysAPI, key string, ttl uint64, wait bool) (Lock, error) {
 	hasLock := false
 	key = addPrefix(key)
-	lock, err := addLockDirChild(client, key)
+	lock, err := addLockDirChild(locker.client, kapi, key)
 	if err != nil {
 		return nil, errgo.Mask(err)
 	}
 
 	for !hasLock {
-		res, err := client.Get(key, true, true)
+		res, err := kapi.Get(context.Background(), key, &etcd.GetOptions{Recursive: true, Sort: true})
 		if err != nil {
 			return nil, errgo.Mask(err)
 		}
@@ -67,7 +71,7 @@ func (locker *EtcdLocker) acquire(client *etcd.Client, key string, ttl uint64, w
 			sort.Sort(res.Node.Nodes)
 			if res.Node.Nodes[0].CreatedIndex != lock.Node.CreatedIndex {
 				if !wait {
-					client.Delete(lock.Node.Key, false)
+					kapi.Delete(context.Background(), lock.Node.Key, &etcd.DeleteOptions{})
 					return nil, &Error{res.Node.Nodes[0].Value}
 				} else {
 					err = locker.Wait(lock.Node.Key)
@@ -86,20 +90,20 @@ func (locker *EtcdLocker) acquire(client *etcd.Client, key string, ttl uint64, w
 	}
 
 	// If we get the lock, set the ttl and return it
-	_, err = client.Update(lock.Node.Key, lock.Node.Value, ttl)
+	_, err = kapi.Set(context.Background(), lock.Node.Key, lock.Node.Value, &etcd.SetOptions{TTL: time.Duration(ttl) * time.Second})
 	if err != nil {
 		return nil, errgo.Mask(err)
 	}
 
-	return &EtcdLock{client, lock.Node.Key, lock.Node.CreatedIndex}, nil
+	return &EtcdLock{kapi, lock.Node.Key, lock.Node.CreatedIndex}, nil
 }
 
-func addLockDirChild(client *etcd.Client, key string) (*etcd.Response, error) {
+func addLockDirChild(client etcd.Client, kapi etcd.KeysAPI, key string) (*etcd.Response, error) {
 	hostname, err := os.Hostname()
 	if err != nil {
 		return nil, errgo.Notef(err, "fail to get hostname")
 	}
-	client.SyncCluster()
+	client.Sync(context.Background())
 
-	return client.AddChild(key, hostname, 0)
+	return kapi.CreateInOrder(context.Background(), key, hostname, &etcd.CreateInOrderOptions{})
 }
