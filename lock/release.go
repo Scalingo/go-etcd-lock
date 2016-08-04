@@ -1,7 +1,7 @@
 package lock
 
 import (
-	ect "github.com/coreos/etcd/client"
+	etcd "github.com/coreos/etcd/client"
 	"golang.org/x/net/context"
 	"gopkg.in/errgo.v1"
 )
@@ -11,8 +11,7 @@ func (l *EtcdLock) Release() error {
 		return errgo.New("nil lock")
 	}
 
-	kapi := ect.NewKeysAPI(*l.client)
-	_, err := kapi.Delete(context.Background(), l.key, &ect.DeleteOptions{Recursive: false})
+	_, err := l.kapi.Delete(context.Background(), l.key, &etcd.DeleteOptions{})
 	if err != nil {
 		return errgo.Mask(err)
 	}

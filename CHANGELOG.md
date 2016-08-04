@@ -1,9 +1,6 @@
-v0.1
+v2.0
 
-```go
-func Acquire(client *etcd.Client, key string, uint64 ttl) (*Lock, error)
-func (lock *Lock) Release() error
-```
+Change ETCD client
 
 v0.2
 
@@ -13,3 +10,9 @@ func WaitAcquire(client *etcd.Client, key string, uint64 ttl) (*Lock, erro)
 ```
 
 
+v0.1
+
+```go
+func Acquire(client *etcd.Client, key string, uint64 ttl) (*Lock, error)
+func (lock *Lock) Release() error
+```

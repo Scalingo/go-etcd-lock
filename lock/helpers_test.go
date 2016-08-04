@@ -4,18 +4,21 @@ import (
 	"log"
 	"net"
 
-	ect "github.com/coreos/etcd/client"
+	etcd "github.com/coreos/etcd/client"
 )
 
 func init() {
-	s, err := net.Dial("tcp", "127.0.0.1:4001")
+	s, err := net.Dial("tcp", "127.0.0.1:2379")
 	if err != nil {
 		log.Fatalln("etcd is not running on localhost", err)
 	}
 	s.Close()
 }
 
-func client() *ect.Client {
-	client, _ := ect.New(ect.Config{Endpoints: []string{"http://localhost:4001"}})
-	return &client
+func client() etcd.Client {
+	client, err := etcd.New(etcd.Config{Endpoints: []string{"http://localhost:2379"}})
+	if err != nil {
+		panic(err)
+	}
+	return client
 }
