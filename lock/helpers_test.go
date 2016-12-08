@@ -4,7 +4,7 @@ import (
 	"log"
 	"net"
 
-	etcd "github.com/coreos/etcd/client"
+	etcd "github.com/coreos/etcd/clientv3"
 )
 
 func init() {
@@ -15,7 +15,7 @@ func init() {
 	s.Close()
 }
 
-func client() etcd.Client {
+func client() *etcd.Client {
 	client, err := etcd.New(etcd.Config{Endpoints: []string{"http://localhost:2379"}})
 	if err != nil {
 		panic(err)

@@ -12,8 +12,8 @@ func TestAcquire(t *testing.T) {
 	locker := NewEtcdLocker(client())
 	Convey("A lock shouldn't be acquired twice", t, func() {
 		lock, err := locker.Acquire("/lock", 10)
-		defer lock.Release()
 		So(err, ShouldBeNil)
+		defer lock.Release()
 		So(lock, ShouldNotBeNil)
 		lock, err = locker.Acquire("/lock", 10)
 		So(err, ShouldNotBeNil)

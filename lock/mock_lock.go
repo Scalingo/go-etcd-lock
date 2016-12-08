@@ -32,7 +32,7 @@ func (locker *MockLocker) Acquire(path string, ttl uint64) (Lock, error) {
 	}
 
 	if m.locked {
-		return nil, &Error{hostname: "localhost"}
+		return nil, &Error{}
 	} else {
 		m.mutex.Lock()
 		m.locked = true
