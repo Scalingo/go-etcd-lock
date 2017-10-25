@@ -18,6 +18,7 @@ func (e *Error) Error() string {
 type Locker interface {
 	Acquire(key string, ttl int) (Lock, error)
 	WaitAcquire(key string, ttl int) (Lock, error)
+	Wait(key string) error
 }
 
 type EtcdLocker struct {
@@ -49,7 +50,8 @@ func (locker *EtcdLocker) acquire(key string, ttl int, wait bool) (Lock, error) 
 	if err != nil {
 		return nil, err
 	}
-	mutex := concurrency.NewMutex(session, addPrefix(key))
+	key = addPrefix(key)
+	mutex := concurrency.NewMutex(session, key)
 
 	ctx := context.Background()
 	if !wait {
