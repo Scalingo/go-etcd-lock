@@ -3,6 +3,7 @@ package lock
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	etcd "github.com/coreos/etcd/clientv3"
@@ -34,7 +35,9 @@ type Lock interface {
 }
 
 type EtcdLock struct {
-	mutex *concurrency.Mutex
+	*sync.Mutex
+	mutex    *concurrency.Mutex
+	released bool
 }
 
 func (locker *EtcdLocker) Acquire(key string, ttl int) (Lock, error) {
@@ -65,7 +68,7 @@ func (locker *EtcdLocker) acquire(key string, ttl int, wait bool) (Lock, error) 
 		return nil, &Error{}
 	}
 
-	lock := &EtcdLock{mutex: mutex}
+	lock := &EtcdLock{mutex: mutex, Mutex: &sync.Mutex{}}
 
 	// Release the lock after the end of the TTL automatically
 	go func() {

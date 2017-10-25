@@ -22,15 +22,13 @@ func TestAcquire(t *testing.T) {
 	})
 
 	Convey("After expiration, a lock should be acquirable again", t, func() {
-		lock, err := locker.Acquire("/lock-expire", 1)
+		_, err := locker.Acquire("/lock-expire", 1)
 		So(err, ShouldBeNil)
-		So(lock, ShouldNotBeNil)
 
 		time.Sleep(2 * time.Second)
 
 		lock, err = locker.Acquire("/lock-expire", 1)
 		So(err, ShouldBeNil)
-		So(lock, ShouldNotBeNil)
 		lock.Release()
 	})
 }
