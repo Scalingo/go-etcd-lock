@@ -1,8 +1,8 @@
 package lock
 
 import (
+	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	etcd "github.com/coreos/etcd/clientv3"
@@ -33,7 +33,7 @@ type Lock interface {
 }
 
 type EtcdLock struct {
-	mutex sync.Locker
+	mutex *concurrency.Mutex
 }
 
 func (locker *EtcdLocker) Acquire(key string, ttl int) (Lock, error) {
@@ -49,23 +49,29 @@ func (locker *EtcdLocker) acquire(key string, ttl int, wait bool) (Lock, error) 
 	if err != nil {
 		return nil, err
 	}
-	lock := concurrency.NewLocker(session, key)
+	mutex := concurrency.NewMutex(session, addPrefix(key))
 
-	if wait {
-		lock.Lock()
-		return &EtcdLock{mutex: lock}, nil
-	} else {
-		timer := time.NewTimer(10 * time.Second)
-		gotLock := make(chan struct{})
-		go func() {
-			lock.Lock()
-			close(gotLock)
-		}()
-		select {
-		case <-gotLock:
-			return &EtcdLock{mutex: lock}, nil
-		case <-timer.C:
-			return nil, &Error{}
-		}
+	ctx := context.Background()
+	if !wait {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
 	}
+
+	err = mutex.Lock(ctx)
+	if err == context.DeadlineExceeded {
+		return nil, &Error{}
+	}
+
+	lock := &EtcdLock{mutex: mutex}
+
+	// Release the lock after the end of the TTL automatically
+	go func() {
+		select {
+		case <-time.After(time.Duration(ttl) * time.Second):
+			lock.Release()
+		}
+	}()
+
+	return lock, nil
 }
