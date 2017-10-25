@@ -27,7 +27,7 @@ func TestAcquire(t *testing.T) {
 
 		time.Sleep(2 * time.Second)
 
-		lock, err = locker.Acquire("/lock-expire", 1)
+		lock, err := locker.Acquire("/lock-expire", 1)
 		So(err, ShouldBeNil)
 		lock.Release()
 	})
