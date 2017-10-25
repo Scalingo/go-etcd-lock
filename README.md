@@ -1,13 +1,7 @@
 etcd-lock
 =========
 
-For version 0.4.0 of etcd the module lock has been deprecated.
-
-This is a basic client implementation of lock based on the logics in mod/lock
-
-This library doesn't provide the `*etcd.Client` because it doesn't want to
-manage the condfiguration of it (TLS or not, endpoints etc.) So a client has to
-exist previously
+[ ![Codeship Status for Scalingo/go-etcd-lock](https://app.codeship.com/projects/fda40030-9bc6-0135-f438-2e7abb19bcf1/status?branch=master)](https://app.codeship.com/projects/252772)
 
 Import
 ------
@@ -47,7 +41,7 @@ if err != nil {
 Testing
 -------
 
-You need a etcd instance running on `localhost:4001`, then:
+You need a etcd instance running on `localhost:2379`, then:
 
 ```
 go test ./...
