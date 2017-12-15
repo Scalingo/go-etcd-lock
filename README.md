@@ -11,7 +11,7 @@ Import
 get get github.com/Scalingo/go-etcd-lock
 
 # Last stable is v0 via gopkg.in
-go get gopkg.in/Scalingo/go-etcd-lock.v0/lock
+go get gopkg.in/Scalingo/go-etcd-lock.v3vendor/github.com/Scalingo/go-etcd-lock/lock/lock
 ```
 
 Example
