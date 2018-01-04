@@ -7,7 +7,7 @@ import (
 	lock "github.com/Scalingo/go-etcd-lock/lock"
 )
 
-type LockerMock struct {
+type MockLockerMutex struct {
 	*sync.Mutex
 	locks map[string]*MockLock
 }
@@ -17,14 +17,14 @@ type MockLock struct {
 	locked bool
 }
 
-func New() *LockerMock {
-	return &LockerMock{
+func New() *MockLockerMutex {
+	return &MockLockerMutex{
 		Mutex: &sync.Mutex{},
 		locks: make(map[string]*MockLock),
 	}
 }
 
-func (locker *LockerMock) Acquire(path string, ttl uint64) (lock.Lock, error) {
+func (locker *MockLockerMutex) Acquire(path string, ttl uint64) (lock.Lock, error) {
 	locker.Lock()
 	defer locker.Unlock()
 	m, ok := locker.locks[path]
@@ -50,7 +50,7 @@ func (locker *LockerMock) Acquire(path string, ttl uint64) (lock.Lock, error) {
 	return m, nil
 }
 
-func (locker *LockerMock) WaitAcquire(path string, ttl uint64) (lock.Lock, error) {
+func (locker *MockLockerMutex) WaitAcquire(path string, ttl uint64) (lock.Lock, error) {
 	var l lock.Lock
 	var err error = &lock.Error{}
 	for err != nil {
@@ -62,7 +62,7 @@ func (locker *LockerMock) WaitAcquire(path string, ttl uint64) (lock.Lock, error
 	return l, nil
 }
 
-func (locker *LockerMock) Wait(path string) error {
+func (locker *MockLockerMutex) Wait(path string) error {
 	locker.Lock()
 	defer locker.Unlock()
 
