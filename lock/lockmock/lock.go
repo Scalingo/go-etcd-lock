@@ -1,11 +1,13 @@
-package lock
+package lockmock
 
 import (
 	"sync"
 	"time"
+
+	lock "github.com/Scalingo/go-etcd-lock/lock"
 )
 
-type MockLocker struct {
+type MockLockerMutex struct {
 	*sync.Mutex
 	locks map[string]*MockLock
 }
@@ -15,14 +17,14 @@ type MockLock struct {
 	locked bool
 }
 
-func NewMockLocker() *MockLocker {
-	return &MockLocker{
+func New() *MockLockerMutex {
+	return &MockLockerMutex{
 		Mutex: &sync.Mutex{},
 		locks: make(map[string]*MockLock),
 	}
 }
 
-func (locker *MockLocker) Acquire(path string, ttl uint64) (Lock, error) {
+func (locker *MockLockerMutex) Acquire(path string, ttl uint64) (lock.Lock, error) {
 	locker.Lock()
 	defer locker.Unlock()
 	m, ok := locker.locks[path]
@@ -32,11 +34,11 @@ func (locker *MockLocker) Acquire(path string, ttl uint64) (Lock, error) {
 	}
 
 	if m.locked {
-		return nil, &Error{}
-	} else {
-		m.mutex.Lock()
-		m.locked = true
+		return nil, &lock.Error{}
 	}
+
+	m.mutex.Lock()
+	m.locked = true
 
 	if ttl > 0 {
 		go func() {
@@ -48,19 +50,19 @@ func (locker *MockLocker) Acquire(path string, ttl uint64) (Lock, error) {
 	return m, nil
 }
 
-func (locker *MockLocker) WaitAcquire(path string, ttl uint64) (Lock, error) {
-	var lock Lock
-	var err error = &Error{}
+func (locker *MockLockerMutex) WaitAcquire(path string, ttl uint64) (lock.Lock, error) {
+	var l lock.Lock
+	var err error = &lock.Error{}
 	for err != nil {
-		lock, err = locker.Acquire(path, ttl)
+		l, err = locker.Acquire(path, ttl)
 		if err != nil {
 			break
 		}
 	}
-	return lock, nil
+	return l, nil
 }
 
-func (locker *MockLocker) Wait(path string) error {
+func (locker *MockLockerMutex) Wait(path string) error {
 	locker.Lock()
 	defer locker.Unlock()
 

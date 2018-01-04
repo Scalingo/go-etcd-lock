@@ -1,10 +1,8 @@
-etcd-lock
-=========
+# etcd-lock
 
 [ ![Codeship Status for Scalingo/go-etcd-lock](https://app.codeship.com/projects/fda40030-9bc6-0135-f438-2e7abb19bcf1/status?branch=master)](https://app.codeship.com/projects/252772)
 
-Import
-------
+## Import
 
 ```
 # Master via standard import
@@ -14,8 +12,7 @@ get get github.com/Scalingo/go-etcd-lock
 go get gopkg.in/Scalingo/go-etcd-lock.v3vendor/github.com/Scalingo/go-etcd-lock/lock/lock
 ```
 
-Example
--------
+## Example
 
 ```go
 l, err := lock.Acquire(client, "/name", 60)
@@ -38,11 +35,18 @@ if err != nil {
 }
 ```
 
-Testing
--------
+## Testing
 
 You need a etcd instance running on `localhost:2379`, then:
 
 ```
 go test ./...
+```
+
+## Generate mock
+
+From the `/lock/` folder:
+
+```
+mockgen -destination lockmock/gomock_lock.go -package lockmock github.com/Scalingo/go-etcd-lock/lock Locker
 ```
