@@ -9,10 +9,10 @@ import (
 
 type MockLockerMutex struct {
 	*sync.Mutex
-	locks map[string]*MockLock
+	locks map[string]*MockLockMutex
 }
 
-type MockLock struct {
+type MockLockMutex struct {
 	mutex  *sync.Mutex
 	locked bool
 }
@@ -20,7 +20,7 @@ type MockLock struct {
 func New() *MockLockerMutex {
 	return &MockLockerMutex{
 		Mutex: &sync.Mutex{},
-		locks: make(map[string]*MockLock),
+		locks: make(map[string]*MockLockMutex),
 	}
 }
 
@@ -29,7 +29,7 @@ func (locker *MockLockerMutex) Acquire(path string, ttl uint64) (lock.Lock, erro
 	defer locker.Unlock()
 	m, ok := locker.locks[path]
 	if !ok {
-		locker.locks[path] = &MockLock{mutex: &sync.Mutex{}}
+		locker.locks[path] = &MockLockMutex{mutex: &sync.Mutex{}}
 		m = locker.locks[path]
 	}
 
@@ -79,7 +79,7 @@ func (locker *MockLockerMutex) Wait(path string) error {
 	return nil
 }
 
-func (lock *MockLock) Release() error {
+func (lock *MockLockMutex) Release() error {
 	lock.locked = false
 	lock.mutex.Unlock()
 	return nil
