@@ -1,6 +1,10 @@
+v3.4.0
+
+* ETCD Client to v3.4.3
+
 v2.0
 
-Change ETCD client
+* Change ETCD client
 
 v0.2
 
