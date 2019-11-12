@@ -4,37 +4,37 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/smartystreets/goconvey/convey"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestRelease(t *testing.T) {
 	locker := NewEtcdLocker(client())
-	Convey("After release a key should be lockable immediately", t, func() {
+	t.Run("After release a key should be lockable immediately", func(t *testing.T) {
 		lock, err := locker.Acquire("/lock-release", 10)
-		So(lock, ShouldNotBeNil)
-		So(err, ShouldBeNil)
+		assert.NotNil(t, lock)
+		assert.NoError(t, err)
 
 		err = lock.Release()
-		So(err, ShouldBeNil)
+		assert.NoError(t, err)
 
 		lock, err = locker.Acquire("/lock-release", 10)
-		So(lock, ShouldNotBeNil)
-		So(err, ShouldBeNil)
+		assert.NotNil(t, lock)
+		assert.NoError(t, err)
 
 		err = lock.Release()
-		So(err, ShouldBeNil)
+		assert.NoError(t, err)
 	})
 
-	Convey("After expiration, release a lock shouldn't produce an error", t, func() {
+	t.Run("After expiration, release a lock shouldn't produce an error", func(t *testing.T) {
 		lock, _ := locker.Acquire("/lock-release-exp", 1)
 		time.Sleep(2)
 		err := lock.Release()
-		So(err, ShouldBeNil)
+		assert.NoError(t, err)
 	})
 
-	Convey("Release a nil lock should not panic", t, func() {
+	t.Run("Release a nil lock should not panic", func(t *testing.T) {
 		var lock *EtcdLock
 		err := lock.Release()
-		So(err, ShouldNotBeNil)
+		assert.NotNil(t, err)
 	})
 }

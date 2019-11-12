@@ -26,6 +26,14 @@
   version = "v4"
 
 [[projects]]
+  digest = "1:ffe9824d294da03b391f44e1ae8281281b4afc1bdaa9588c9097785e3af10cec"
+  name = "github.com/davecgh/go-spew"
+  packages = ["spew"]
+  pruneopts = "UT"
+  revision = "8991bc29aa16c548c550c7ff78260e27b9ab7c73"
+  version = "v1.1.1"
+
+[[projects]]
   digest = "1:e20a9d6598878d629e04541d96076bf232c1ee36f6b267c4a5dae7779f15c36a"
   name = "github.com/gogo/protobuf"
   packages = [
@@ -68,45 +76,23 @@
   version = "v1.1.1"
 
 [[projects]]
-  branch = "master"
-  digest = "1:f14d1b50e0075fb00177f12a96dd7addf93d1e2883c25befd17285b779549795"
-  name = "github.com/gopherjs/gopherjs"
-  packages = ["js"]
+  digest = "1:0028cb19b2e4c3112225cd871870f2d9cf49b9b4276531f03438a88e94be86fe"
+  name = "github.com/pmezard/go-difflib"
+  packages = ["difflib"]
   pruneopts = "UT"
-  revision = "ce3c9ade29deed38a85f259f40e823cc17213830"
+  revision = "792786c7400a136282c1664665ae0a8db921c6c2"
+  version = "v1.0.0"
 
 [[projects]]
-  digest = "1:4b63210654b1f2b664f74ec434a1bb1cb442b3d75742cc064a10808d1cca6361"
-  name = "github.com/jtolds/gls"
-  packages = ["."]
-  pruneopts = "UT"
-  revision = "b4936e06046bbecbb94cae9c18127ebe510a2cb9"
-  version = "v4.20"
-
-[[projects]]
-  digest = "1:237af0cf68bac89e21af72e6cd6b64f388854895e75f82ad08c6c011e1a8286c"
-  name = "github.com/smartystreets/assertions"
+  digest = "1:99d32780e5238c2621fff621123997c3e3cca96db8be13179013aea77dfab551"
+  name = "github.com/stretchr/testify"
   packages = [
-    ".",
-    "internal/go-diff/diffmatchpatch",
-    "internal/go-render/render",
-    "internal/oglematchers",
+    "assert",
+    "require",
   ]
   pruneopts = "UT"
-  revision = "f487f9de1cd36ebab28235b9373028812fb47cbd"
-  version = "1.10.1"
-
-[[projects]]
-  digest = "1:483aa658b8b58e357a07ebdfcbcb0202b46f0c0f91e9b63c8807f7d4f5cd30f9"
-  name = "github.com/smartystreets/goconvey"
-  packages = [
-    "convey",
-    "convey/gotest",
-    "convey/reporting",
-  ]
-  pruneopts = "UT"
-  revision = "505e419363375c0dc132d3ac02632a4ee32199ca"
-  version = "v1.6.4"
+  revision = "221dbe5ed46703ee255b1da0dec05086f5035f62"
+  version = "v1.4.0"
 
 [[projects]]
   digest = "1:bba93b9716e6fca201f2460a56e540d70f9caece3aabb7ac6b1d575878ee74e6"
@@ -322,6 +308,14 @@
   version = "v1.0.1"
 
 [[projects]]
+  digest = "1:f26a5d382387e03a40d1471dddfba85dfff9bf05352d7e42d37612677c4d3c5c"
+  name = "gopkg.in/yaml.v2"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "f90ceb4f409096b60e2e9076b38b304b8246e5fa"
+  version = "v2.2.5"
+
+[[projects]]
   digest = "1:131158a88aad1f94854d0aa21a64af2802d0a470fb0f01cb33c04fafd2047111"
   name = "honnef.co/go/tools"
   packages = [
@@ -360,7 +354,8 @@
   analyzer-version = 1
   input-imports = [
     "github.com/golang/mock/gomock",
-    "github.com/smartystreets/goconvey/convey",
+    "github.com/stretchr/testify/assert",
+    "github.com/stretchr/testify/require",
     "go.etcd.io/etcd/clientv3",
     "go.etcd.io/etcd/clientv3/concurrency",
     "gopkg.in/errgo.v1",

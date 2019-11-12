@@ -23,11 +23,27 @@ type Locker interface {
 }
 
 type EtcdLocker struct {
-	client *etcd.Client
+	client         *etcd.Client
+	trylockTimeout time.Duration
 }
 
-func NewEtcdLocker(client *etcd.Client) Locker {
-	return &EtcdLocker{client: client}
+type EtcdLockerOpt func(locker *EtcdLocker)
+
+func NewEtcdLocker(client *etcd.Client, opts ...EtcdLockerOpt) Locker {
+	locker := &EtcdLocker{
+		client:         client,
+		trylockTimeout: 10 * time.Second,
+	}
+	for _, opt := range opts {
+		opt(locker)
+	}
+	return locker
+}
+
+func WithTrylockTimeout(timeout time.Duration) EtcdLockerOpt {
+	return EtcdLockerOpt(func(locker *EtcdLocker) {
+		locker.trylockTimeout = timeout
+	})
 }
 
 type Lock interface {
@@ -36,8 +52,7 @@ type Lock interface {
 
 type EtcdLock struct {
 	*sync.Mutex
-	mutex    *concurrency.Mutex
-	released bool
+	mutex *concurrency.Mutex
 }
 
 func (locker *EtcdLocker) Acquire(key string, ttl int) (Lock, error) {
@@ -59,23 +74,23 @@ func (locker *EtcdLocker) acquire(key string, ttl int, wait bool) (Lock, error) 
 	ctx := context.Background()
 	if !wait {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 10*time.Second)
+		ctx, cancel = context.WithTimeout(ctx, locker.trylockTimeout)
 		defer cancel()
 	}
 
 	err = mutex.Lock(ctx)
 	if err == context.DeadlineExceeded {
 		return nil, &Error{}
+	} else if err != nil {
+		return nil, err
 	}
 
 	lock := &EtcdLock{mutex: mutex, Mutex: &sync.Mutex{}}
 
-	// Release the lock after the end of the TTL automatically
 	go func() {
-		select {
-		case <-time.After(time.Duration(ttl) * time.Second):
+		time.AfterFunc(time.Duration(ttl)*time.Second, func() {
 			lock.Release()
-		}
+		})
 	}()
 
 	return lock, nil

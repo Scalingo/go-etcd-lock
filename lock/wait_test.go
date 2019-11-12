@@ -4,31 +4,32 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/smartystreets/goconvey/convey"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestWait(t *testing.T) {
 	locker := NewEtcdLocker(client())
-	Convey("Wait should wait the end of a lock", t, func() {
+	t.Run("Wait should wait the end of a lock", func(t *testing.T) {
 		l, err := locker.WaitAcquire("/lock-wait", 3)
-		So(err, ShouldBeNil)
-		So(l, ShouldNotBeNil)
+		require.NoError(t, err)
+		assert.NotNil(t, l)
 
 		t1 := time.Now()
 		err = locker.Wait("/lock-wait")
-		So(err, ShouldBeNil)
+		require.NoError(t, err)
 		t2 := time.Now()
 
-		So(int(t2.Sub(t1).Seconds()), ShouldEqual, 3)
+		assert.Equal(t, int(t2.Sub(t1).Seconds()), 3)
 	})
 
-	Convey("Wait should return directly with an unlocked key", t, func() {
+	t.Run("Wait should return directly with an unlocked key", func(t *testing.T) {
 		t1 := time.Now()
 
 		err := locker.Wait("/lock-free-wait")
-		So(err, ShouldBeNil)
+		require.NoError(t, err)
 
 		t2 := time.Now()
-		So(int(t2.Sub(t1).Seconds()), ShouldEqual, 0)
+		assert.Equal(t, int(t2.Sub(t1).Seconds()), 0)
 	})
 }
