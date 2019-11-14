@@ -1,3 +1,7 @@
+## v3.4.2
+
+* Simpler dependencies management
+
 ## v3.4.1
 
 * Fix race condition in specs
