@@ -12,7 +12,7 @@ import (
 
 func TestAcquire(t *testing.T) {
 	t.Run("A lock shouldn't be acquired twice", func(t *testing.T) {
-		locker := NewEtcdLocker(client(), WithTrylockTimeout(500*time.Millisecond))
+		locker := NewEtcdLocker(client(), WithTryLockTimeout(500*time.Millisecond))
 		lock, err := locker.Acquire("/lock", 10)
 		require.NoError(t, err)
 		defer lock.Release()
@@ -20,18 +20,18 @@ func TestAcquire(t *testing.T) {
 		assert.NotNil(t, lock)
 		lock, err = locker.Acquire("/lock", 10)
 		assert.NotNil(t, err)
-		assert.IsType(t, &Error{}, errgo.Cause(err))
+		assert.IsType(t, &ErrAlreadyLocked{}, errgo.Cause(err))
 		assert.Nil(t, lock)
 	})
 
 	t.Run("After expiration, a lock should be acquirable again", func(t *testing.T) {
-		locker := NewEtcdLocker(client(), WithTrylockTimeout(500*time.Millisecond))
+		locker := NewEtcdLocker(client(), WithTryLockTimeout(500*time.Millisecond))
 		_, err := locker.Acquire("/lock-expire", 1)
 		require.NoError(t, err)
 
 		time.Sleep(2 * time.Second)
 
-		locker = NewEtcdLocker(client(), WithTrylockTimeout(500*time.Millisecond))
+		locker = NewEtcdLocker(client(), WithTryLockTimeout(500*time.Millisecond))
 		lock, err := locker.Acquire("/lock-expire", 1)
 		require.NoError(t, err)
 		lock.Release()
@@ -41,7 +41,7 @@ func TestAcquire(t *testing.T) {
 func TestWaitAcquire(t *testing.T) {
 	t.Run("WaitLock should lock a key when the key is free", func(t *testing.T) {
 		t.Run("It should wait when a key is locked", func(t *testing.T) {
-			locker := NewEtcdLocker(client(), WithTrylockTimeout(500*time.Millisecond))
+			locker := NewEtcdLocker(client(), WithTryLockTimeout(500*time.Millisecond))
 			lock, err := locker.Acquire("/lock-wait-acquire", 2)
 			require.NoError(t, err)
 			assert.NotNil(t, lock)
@@ -58,7 +58,7 @@ func TestWaitAcquire(t *testing.T) {
 		})
 
 		t.Run("It should not wait if key is free", func(t *testing.T) {
-			locker := NewEtcdLocker(client(), WithTrylockTimeout(500*time.Millisecond))
+			locker := NewEtcdLocker(client(), WithTryLockTimeout(500*time.Millisecond))
 			t1 := time.Now()
 			lock, err := locker.WaitAcquire("/lock-wait-acquire-free", 2)
 			t2 := time.Now()
@@ -67,10 +67,25 @@ func TestWaitAcquire(t *testing.T) {
 			assert.NotNil(t, lock)
 			assert.Equal(t, int(t2.Sub(t1).Seconds()), 0)
 		})
+
+		t.Run("it should not wait more than the maxTryLockTimeout", func(t *testing.T) {
+			locker := NewEtcdLocker(
+				client(),
+				WithTryLockTimeout(500*time.Millisecond),
+				WithMaxTryLockTimeout(time.Second),
+			)
+			t1 := time.Now()
+			lock, err := locker.WaitAcquire("/lock-wait-acquire-free", 2)
+			t2 := time.Now()
+
+			assert.IsType(t, &ErrAlreadyLocked{}, errgo.Cause(err))
+			assert.Nil(t, lock)
+			assert.Equal(t, int(t2.Sub(t1).Seconds()), 1)
+		})
 	})
 
 	t.Run("When two instances are waiting for a 2 seconds lock", func(t *testing.T) {
-		locker := NewEtcdLocker(client(), WithTrylockTimeout(500*time.Millisecond))
+		locker := NewEtcdLocker(client(), WithTryLockTimeout(500*time.Millisecond))
 		locker.Acquire("/lock-double-wait", 2)
 		t1 := time.Now()
 		ends := make(chan time.Time)
