@@ -34,7 +34,7 @@ func (locker *MockLockerMutex) Acquire(path string, ttl uint64) (lock.Lock, erro
 	}
 
 	if m.locked {
-		return nil, &lock.Error{}
+		return nil, &lock.ErrAlreadyLocked{}
 	}
 
 	m.mutex.Lock()
@@ -52,7 +52,7 @@ func (locker *MockLockerMutex) Acquire(path string, ttl uint64) (lock.Lock, erro
 
 func (locker *MockLockerMutex) WaitAcquire(path string, ttl uint64) (lock.Lock, error) {
 	var l lock.Lock
-	var err error = &lock.Error{}
+	var err error = &lock.ErrAlreadyLocked{}
 	for err != nil {
 		l, err = locker.Acquire(path, ttl)
 		if err != nil {
