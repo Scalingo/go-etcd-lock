@@ -8,6 +8,7 @@ import (
 
 	etcd "go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/clientv3/concurrency"
+	"gopkg.in/errgo.v1"
 )
 
 type ErrAlreadyLocked struct{}
@@ -41,7 +42,7 @@ type EtcdLockerOpt func(locker *EtcdLocker)
 func NewEtcdLocker(client *etcd.Client, opts ...EtcdLockerOpt) Locker {
 	locker := &EtcdLocker{
 		client:                  client,
-		tryLockTimeout:          10 * time.Second,
+		tryLockTimeout:          30 * time.Second,
 		maxTryLockTimeout:       2 * time.Minute,
 		cooldownTryLockDuration: time.Second,
 	}
@@ -99,27 +100,33 @@ func (locker *EtcdLocker) acquire(key string, ttl int, wait bool) (Lock, error) 
 	mutex := concurrency.NewMutex(session, key)
 	timeout := time.NewTimer(locker.maxTryLockTimeout)
 
+	var tryLockErr error
 	for {
 		// If we've wait more than the maxTryLockTimeout, we stop waiting and
-		// consider the lock already taken
+		// consider the lock already taken.
 		select {
 		case <-timeout.C:
 			session.Close()
-			return nil, &ErrAlreadyLocked{}
+			if tryLockErr == context.DeadlineExceeded {
+				return nil, &ErrAlreadyLocked{}
+			} else {
+				return nil, errgo.Notef(tryLockErr, "fail to acquire lock")
+			}
 		default:
 		}
 
 		// Otherwise we try locking:
 		// * If the attempt fails and we're still waiting, we retry the operation after a short cooldown
 		// * if the attempt fails and we're not waiting, the lock is already taken
-		err := locker.tryLock(mutex)
+		// * if the attempt succeeded, keep on
+		tryLockErr = locker.tryLock(mutex)
 
-		shouldWait := wait && err == context.DeadlineExceeded
-		shouldRetry := shouldWait || (err != nil && err != context.DeadlineExceeded)
+		shouldWait := wait && tryLockErr == context.DeadlineExceeded
+		shouldRetry := shouldWait || (tryLockErr != nil && tryLockErr != context.DeadlineExceeded)
 		if shouldRetry {
 			time.Sleep(locker.cooldownTryLockDuration)
 			continue
-		} else if err == context.DeadlineExceeded {
+		} else if tryLockErr == context.DeadlineExceeded {
 			session.Close()
 			return nil, &ErrAlreadyLocked{}
 		} else {
