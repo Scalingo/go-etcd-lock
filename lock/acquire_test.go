@@ -41,7 +41,11 @@ func TestAcquire(t *testing.T) {
 func TestWaitAcquire(t *testing.T) {
 	t.Run("WaitLock should lock a key when the key is free", func(t *testing.T) {
 		t.Run("It should wait when a key is locked", func(t *testing.T) {
-			locker := NewEtcdLocker(client(), WithTryLockTimeout(500*time.Millisecond))
+			locker := NewEtcdLocker(
+				client(),
+				WithTryLockTimeout(500*time.Millisecond),
+				WithCooldownTryLockDuration(0),
+			)
 			lock, err := locker.Acquire("/lock-wait-acquire", 2)
 			require.NoError(t, err)
 			assert.NotNil(t, lock)
@@ -85,7 +89,11 @@ func TestWaitAcquire(t *testing.T) {
 	})
 
 	t.Run("When two instances are waiting for a 2 seconds lock", func(t *testing.T) {
-		locker := NewEtcdLocker(client(), WithTryLockTimeout(500*time.Millisecond))
+		locker := NewEtcdLocker(
+			client(),
+			WithTryLockTimeout(500*time.Millisecond),
+			WithCooldownTryLockDuration(0),
+		)
 		locker.Acquire("/lock-double-wait", 2)
 		t1 := time.Now()
 		ends := make(chan time.Time)
