@@ -4,7 +4,7 @@ import (
 	"log"
 	"net"
 
-	etcd "go.etcd.io/etcd/clientv3"
+	etcd "go.etcd.io/etcd/v3/clientv3"
 )
 
 func init() {
