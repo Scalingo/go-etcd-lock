@@ -1,3 +1,8 @@
+## v5.0.1
+
+* Clean Go modules dependencies
+* Checkin go.mod
+
 ## v5.0.0
 
 * Migration to Go Modules
