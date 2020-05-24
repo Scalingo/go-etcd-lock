@@ -1,3 +1,4 @@
 *_test
 *.swp
+go.sum
 /vendor

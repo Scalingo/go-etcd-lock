@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	etcd "go.etcd.io/etcd/clientv3"
-	"go.etcd.io/etcd/clientv3/concurrency"
+	etcd "go.etcd.io/etcd/v3/clientv3"
+	"go.etcd.io/etcd/v3/clientv3/concurrency"
 	"gopkg.in/errgo.v1"
 )
 
