@@ -1,3 +1,9 @@
+## v5.0.0
+
+* Migration to Go Modules
+* Using `go.etcd.io/etcd/v3/...` instead of `go.etcd.io/etcd/...`
+  Reason: etcd commit https://github.com/etcd-io/etcd/commit/96cce208c2cb9e70ac3573b3f76eed7c84d262d1
+
 ## v4.0.0
 
 * Fix error management
