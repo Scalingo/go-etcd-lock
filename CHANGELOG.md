@@ -1,3 +1,7 @@
+## v5.0.3
+
+* Use v5 version in test files
+
 ## v5.0.2
 
 * Package is now github.com/Scalingo/go-etcd-lock/v5 conforming to go modules semantic

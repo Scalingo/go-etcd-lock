@@ -5,9 +5,10 @@
 package lockmock
 
 import (
-	lock "github.com/Scalingo/go-etcd-lock/lock"
-	gomock "github.com/golang/mock/gomock"
 	reflect "reflect"
+
+	lock "github.com/Scalingo/go-etcd-lock/v5/lock"
+	gomock "github.com/golang/mock/gomock"
 )
 
 // MockLocker is a mock of Locker interface

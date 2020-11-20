@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	lock "github.com/Scalingo/go-etcd-lock/lock"
+	lock "github.com/Scalingo/go-etcd-lock/v5/lock"
 )
 
 type MockLockerMutex struct {
