@@ -1,4 +1,4 @@
-module github.com/Scalingo/go-etcd-lock
+module github.com/Scalingo/go-etcd-lock/v5
 
 go 1.14
 
