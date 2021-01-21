@@ -17,7 +17,7 @@ require (
 	github.com/prometheus/common v0.10.0 // indirect
 	github.com/sirupsen/logrus v1.6.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
-	github.com/stretchr/testify v1.4.0
+	github.com/stretchr/testify v1.7.0
 	github.com/tmc/grpc-websocket-proxy v0.0.0-20200427203606-3cfed13b9966 // indirect
 	go.etcd.io/etcd/v3 v3.3.0-rc.0.0.20200518175753-732df43cf85b
 	go.uber.org/zap v1.15.0 // indirect
