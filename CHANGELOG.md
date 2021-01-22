@@ -1,3 +1,10 @@
+# Changelog
+
+## To be Released
+
+* Bump github.com/golang/mock from 1.4.3 to 1.4.4 #12
+* Bump github.com/stretchr/testify from 1.4.0 to 1.7.0 #13
+
 ## v5.0.3
 
 * Use v5 version in test files
