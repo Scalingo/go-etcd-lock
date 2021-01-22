@@ -2,6 +2,8 @@
 
 ## To be Released
 
+## v5.0.4
+
 * Bump github.com/golang/mock from 1.4.3 to 1.4.4 #12
 * Bump github.com/stretchr/testify from 1.4.0 to 1.7.0 #13
 
