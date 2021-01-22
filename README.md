@@ -1,4 +1,4 @@
-# etcd-lock
+# etcd-lock v5.0.3
 
 [ ![Codeship Status for Scalingo/go-etcd-lock](https://app.codeship.com/projects/fda40030-9bc6-0135-f438-2e7abb19bcf1/status?branch=master)](https://app.codeship.com/projects/252772)
 
@@ -51,3 +51,20 @@ From the `/lock/` folder:
 mockgen -destination lockmock/gomock_locker.go -package lockmock github.com/Scalingo/go-etcd-lock/lock Locker
 mockgen -destination lockmock/gomock_lock.go -package lockmock github.com/Scalingo/go-etcd-lock/lock Lock
 ```
+
+## Release a New Version
+
+Bump new version number in `CHANGELOG.md` and `README.md`.
+
+Commit, tag and create a new release:
+
+```sh
+git add CHANGELOG.md README.md
+git commit -m "Bump v5.0.3"
+git tag v5.0.3
+git push origin master
+git push --tags
+hub release create v5.0.3
+```
+
+The title of the release should be the version number and the text of the release is the same as the changelog.
