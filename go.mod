@@ -3,7 +3,7 @@ module github.com/Scalingo/go-etcd-lock/v5
 go 1.14
 
 require (
-	github.com/Scalingo/go-etcd-lock v4.0.0+incompatible // indirect
+	github.com/skvoch/go-etcd-lock v4.0.0+incompatible // indirect
 	github.com/coreos/etcd v3.3.25+incompatible // indirect
 	github.com/coreos/go-semver v0.3.0 // indirect
 	github.com/coreos/go-systemd v0.0.0-20191104093116-d3cd4ed1dbcf // indirect
