@@ -3,6 +3,7 @@ package lock
 import (
 	"testing"
 	"time"
+	"context"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -10,14 +11,14 @@ import (
 func TestRelease(t *testing.T) {
 	locker := NewEtcdLocker(client())
 	t.Run("After release a key should be lockable immediately", func(t *testing.T) {
-		lock, err := locker.Acquire("/lock-release", 10)
+		lock, err := locker.Acquire(context.Background(),"/lock-release", 10)
 		assert.NotNil(t, lock)
 		assert.NoError(t, err)
 
 		err = lock.Release()
 		assert.NoError(t, err)
 
-		lock, err = locker.Acquire("/lock-release", 10)
+		lock, err = locker.Acquire(context.Background(),"/lock-release", 10)
 		assert.NotNil(t, lock)
 		assert.NoError(t, err)
 
@@ -26,7 +27,7 @@ func TestRelease(t *testing.T) {
 	})
 
 	t.Run("After expiration, release a lock shouldn't produce an error", func(t *testing.T) {
-		lock, _ := locker.Acquire("/lock-release-exp", 1)
+		lock, _ := locker.Acquire(context.Background(),"/lock-release-exp", 1)
 		time.Sleep(2)
 		err := lock.Release()
 		assert.NoError(t, err)

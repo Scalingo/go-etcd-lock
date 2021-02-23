@@ -1,6 +1,7 @@
 package lock
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -13,12 +14,12 @@ import (
 func TestAcquire(t *testing.T) {
 	t.Run("A lock shouldn't be acquired twice", func(t *testing.T) {
 		locker := NewEtcdLocker(client(), WithTryLockTimeout(500*time.Millisecond))
-		lock, err := locker.Acquire("/lock", 10)
+		lock, err := locker.Acquire(context.Background(),"/lock", 10)
 		require.NoError(t, err)
 		defer lock.Release()
 
 		assert.NotNil(t, lock)
-		lock, err = locker.Acquire("/lock", 10)
+		lock, err = locker.Acquire(context.Background(),"/lock", 10)
 		assert.NotNil(t, err)
 		assert.IsType(t, &ErrAlreadyLocked{}, errgo.Cause(err))
 		assert.Nil(t, lock)
@@ -26,13 +27,13 @@ func TestAcquire(t *testing.T) {
 
 	t.Run("After expiration, a lock should be acquirable again", func(t *testing.T) {
 		locker := NewEtcdLocker(client(), WithTryLockTimeout(500*time.Millisecond))
-		_, err := locker.Acquire("/lock-expire", 1)
+		_, err := locker.Acquire(context.Background(),"/lock-expire", 1)
 		require.NoError(t, err)
 
 		time.Sleep(2 * time.Second)
 
 		locker = NewEtcdLocker(client(), WithTryLockTimeout(500*time.Millisecond))
-		lock, err := locker.Acquire("/lock-expire", 1)
+		lock, err := locker.Acquire(context.Background(),"/lock-expire", 1)
 		require.NoError(t, err)
 		lock.Release()
 	})
@@ -46,12 +47,12 @@ func TestWaitAcquire(t *testing.T) {
 				WithTryLockTimeout(500*time.Millisecond),
 				WithCooldownTryLockDuration(0),
 			)
-			lock, err := locker.Acquire("/lock-wait-acquire", 2)
+			lock, err := locker.Acquire(context.Background(),"/lock-wait-acquire", 2)
 			require.NoError(t, err)
 			assert.NotNil(t, lock)
 
 			t1 := time.Now()
-			lock, err = locker.WaitAcquire("/lock-wait-acquire", 2)
+			lock, err = locker.WaitAcquire(context.Background(),"/lock-wait-acquire", 2)
 			t2 := time.Now()
 
 			require.NoError(t, err)
@@ -64,7 +65,7 @@ func TestWaitAcquire(t *testing.T) {
 		t.Run("It should not wait if key is free", func(t *testing.T) {
 			locker := NewEtcdLocker(client(), WithTryLockTimeout(500*time.Millisecond))
 			t1 := time.Now()
-			lock, err := locker.WaitAcquire("/lock-wait-acquire-free", 2)
+			lock, err := locker.WaitAcquire(context.Background(),"/lock-wait-acquire-free", 2)
 			t2 := time.Now()
 
 			require.NoError(t, err)
@@ -79,7 +80,7 @@ func TestWaitAcquire(t *testing.T) {
 				WithMaxTryLockTimeout(time.Second),
 			)
 			t1 := time.Now()
-			lock, err := locker.WaitAcquire("/lock-wait-acquire-free", 2)
+			lock, err := locker.WaitAcquire(context.Background(),"/lock-wait-acquire-free", 2)
 			t2 := time.Now()
 
 			assert.IsType(t, &ErrAlreadyLocked{}, errgo.Cause(err))
@@ -94,7 +95,7 @@ func TestWaitAcquire(t *testing.T) {
 			WithTryLockTimeout(500*time.Millisecond),
 			WithCooldownTryLockDuration(0),
 		)
-		locker.Acquire("/lock-double-wait", 2)
+		locker.Acquire(context.Background(),"/lock-double-wait", 2)
 		t1 := time.Now()
 		ends := make(chan time.Time)
 		locks := make(chan Lock)
@@ -102,13 +103,13 @@ func TestWaitAcquire(t *testing.T) {
 
 		t.Run("The first request should wait 2 and the 2nd, 4 seconds", func(t *testing.T) {
 			go func(t *testing.T) {
-				lock, err := locker.WaitAcquire("/lock-double-wait", 2)
+				lock, err := locker.WaitAcquire(context.Background(),"/lock-double-wait", 2)
 				errs <- err
 				locks <- lock
 				ends <- time.Now()
 			}(t)
 			go func(t *testing.T) {
-				lock, err := locker.WaitAcquire("/lock-double-wait", 2)
+				lock, err := locker.WaitAcquire(context.Background(),"/lock-double-wait", 2)
 				errs <- err
 				locks <- lock
 				ends <- time.Now()
