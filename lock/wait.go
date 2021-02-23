@@ -1,7 +1,9 @@
 package lock
 
-func (locker *EtcdLocker) Wait(key string) error {
-	lock, err := locker.WaitAcquire(key, 1)
+import "context"
+
+func (locker *EtcdLocker) Wait(ctx context.Context, key string) error {
+	lock, err := locker.WaitAcquire(ctx, key, 1)
 	if err != nil {
 		return err
 	}
