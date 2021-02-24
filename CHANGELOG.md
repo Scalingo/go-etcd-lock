@@ -2,6 +2,8 @@
 
 ## To be Released
 
+* Bump github.com/golang/mock from 1.4.4 to 1.5.0
+
 ## v5.0.4
 
 * Bump github.com/golang/mock from 1.4.3 to 1.4.4 #12
