@@ -1,4 +1,4 @@
-# etcd-lock v5.0.4
+# etcd-lock v5.0.5
 
 [ ![Codeship Status for Scalingo/go-etcd-lock](https://app.codeship.com/projects/fda40030-9bc6-0135-f438-2e7abb19bcf1/status?branch=master)](https://app.codeship.com/projects/252772)
 
@@ -6,7 +6,7 @@
 
 ```
 # Master via standard import
-get get github.com/Scalingo/go-etcd-lock
+go get github.com/Scalingo/go-etcd-lock
 
 # Last stable is v0 via gopkg.in
 go get gopkg.in/Scalingo/go-etcd-lock.v3vendor/github.com/Scalingo/go-etcd-lock/lock/lock
@@ -60,11 +60,11 @@ Commit, tag and create a new release:
 
 ```sh
 git add CHANGELOG.md README.md
-git commit -m "Bump v5.0.4"
-git tag v5.0.4
+git commit -m "Bump v5.0.5"
+git tag v5.0.5
 git push origin master
 git push --tags
-hub release create v5.0.4
+hub release create v5.0.5
 ```
 
 The title of the release should be the version number and the text of the release is the same as the changelog.

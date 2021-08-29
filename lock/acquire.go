@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	etcd "go.etcd.io/etcd/v3/clientv3"
-	"go.etcd.io/etcd/v3/clientv3/concurrency"
+	etcd "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	"gopkg.in/errgo.v1"
 )
 
@@ -18,7 +18,7 @@ func (e *ErrAlreadyLocked) Error() string {
 }
 
 type Locker interface {
-	Acquire(ctx context.Context,key string, ttl int) (Lock, error)
+	Acquire(ctx context.Context, key string, ttl int) (Lock, error)
 	WaitAcquire(ctx context.Context, key string, ttl int) (Lock, error)
 	Wait(ctx context.Context, key string) error
 }
@@ -81,17 +81,17 @@ type EtcdLock struct {
 }
 
 func (locker *EtcdLocker) Acquire(ctx context.Context, key string, ttl int) (Lock, error) {
-	return locker.acquire(ctx,key, ttl, false)
+	return locker.acquire(ctx, key, ttl, false)
 }
 
-func (locker *EtcdLocker) WaitAcquire(ctx context.Context,key string, ttl int) (Lock, error) {
+func (locker *EtcdLocker) WaitAcquire(ctx context.Context, key string, ttl int) (Lock, error) {
 	return locker.acquire(ctx, key, ttl, true)
 }
 
 func (locker *EtcdLocker) acquire(ctx context.Context, key string, ttl int, wait bool) (Lock, error) {
 	// A Session is a GRPC connection to ETCD API v3, the connection should be
 	// closed to release resources.
-	session, err := concurrency.NewSession(locker.client, concurrency.WithTTL(ttl),concurrency.WithContext(ctx))
+	session, err := concurrency.NewSession(locker.client, concurrency.WithTTL(ttl), concurrency.WithContext(ctx))
 	if err != nil {
 		return nil, err
 	}

@@ -2,6 +2,11 @@
 
 ## To be Released
 
+## v5.0.5
+
+* Bump github.com/golang/mock from 1.4.4 to 1.6.0
+* Bump go.etcd.io/etcd/client from 3.3.0 to 3.5.0 (with Go modules support! \o/)
+
 ## v5.0.4
 
 * Bump github.com/golang/mock from 1.4.3 to 1.4.4 #12
