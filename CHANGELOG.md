@@ -2,7 +2,7 @@
 
 ## To be Released
 
-* Bump go.etcd.io/etcd/client/v3 from 3.5.0 to 3.5.1
+* Bump go.etcd.io/etcd/client/v3 from 3.5.0 to 3.5.2
 
 ## v5.0.5
 
