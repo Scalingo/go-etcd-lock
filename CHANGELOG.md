@@ -2,6 +2,8 @@
 
 ## To be Released
 
+## v5.0.6
+
 * chore(go): use go 1.17
 * Bump go.etcd.io/etcd/client/v3 from 3.5.0 to 3.5.4
 * Bump github.com/stretchr/testify from 1.7.0 to 1.7.1
