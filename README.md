@@ -1,4 +1,4 @@
-# etcd-lock v5.0.6
+# etcd-lock v5.0.7
 
 [ ![Codeship Status for Scalingo/go-etcd-lock](https://app.codeship.com/projects/fda40030-9bc6-0135-f438-2e7abb19bcf1/status?branch=master)](https://app.codeship.com/projects/252772)
 
@@ -59,12 +59,21 @@ Bump new version number in `CHANGELOG.md` and `README.md`.
 Commit, tag and create a new release:
 
 ```sh
+version="5.0.7"
+
+git switch --create release/${version}
 git add CHANGELOG.md README.md
-git commit -m "Bump v5.0.6"
-git tag v5.0.6
-git push origin master
-git push --tags
-hub release create v5.0.6
+git commit -m "Bump v${version}"
+git push --set-upstream origin release/${version}
+gh pr create --reviewer=EtienneM --title "$(git log -1 --pretty=%B)"
+```
+
+Once the pull request merged, you can tag the new release.
+
+```sh
+git tag v${version}
+git push origin master v${version}
+gh release create v${version}
 ```
 
 The title of the release should be the version number and the text of the release is the same as the changelog.
