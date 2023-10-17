@@ -59,12 +59,21 @@ Bump new version number in `CHANGELOG.md` and `README.md`.
 Commit, tag and create a new release:
 
 ```sh
+version="5.0.7"
+
+git switch --create release/${version}
 git add CHANGELOG.md README.md
-git commit -m "Bump v5.0.7"
-git tag v5.0.7
-git push origin master
-git push --tags
-gh release create v5.0.7
+git commit -m "Bump v${version}"
+git push --set-upstream origin release/${version}
+gh pr create --reviewer=EtienneM --title "$(git log -1 --pretty=%B)"
+```
+
+Once the pull request merged, you can tag the new release.
+
+```sh
+git tag v${version}
+git push origin master v${version}
+gh release create v${version}
 ```
 
 The title of the release should be the version number and the text of the release is the same as the changelog.
