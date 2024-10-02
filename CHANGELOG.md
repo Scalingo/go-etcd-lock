@@ -2,7 +2,10 @@
 
 ## To be Released
 
+## v5.0.8
+
 * build: update Go from 1.20 to 1.22
+* build(deps): various updates
 
 ## v5.0.7
 
