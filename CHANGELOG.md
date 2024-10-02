@@ -2,6 +2,8 @@
 
 ## To be Released
 
+* build: update Go from 1.20 to 1.22
+
 ## v5.0.7
 
 * Various dependencies updates
