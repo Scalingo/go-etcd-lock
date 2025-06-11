@@ -2,6 +2,8 @@
 
 ## To be Released
 
+* build(go): use go 1.24
+
 ## v5.0.8
 
 * build: update Go from 1.20 to 1.22
