@@ -21,7 +21,15 @@ type Locker interface {
 	Acquire(key string, ttl int) (Lock, error)
 	WaitAcquire(key string, ttl int) (Lock, error)
 	Wait(key string) error
+	WaitAcquireWithCallback(key string, ttl int, operationTimeoutCallback func()) (Lock, error)
 }
+
+type Reason string
+
+const (
+	ReasonTimeout Reason = "timeout"
+	ReasonErr     Reason = "error"
+)
 
 type EtcdLocker struct {
 	client *etcd.Client
@@ -76,19 +84,24 @@ type Lock interface {
 
 type EtcdLock struct {
 	*sync.Mutex
-	mutex   *concurrency.Mutex
-	session *concurrency.Session
+	mutex                 *concurrency.Mutex
+	session               *concurrency.Session
+	callbackBeforeRelease func()
 }
 
 func (locker *EtcdLocker) Acquire(key string, ttl int) (Lock, error) {
-	return locker.acquire(key, ttl, false)
+	return locker.acquire(key, ttl, false, nil)
 }
 
 func (locker *EtcdLocker) WaitAcquire(key string, ttl int) (Lock, error) {
-	return locker.acquire(key, ttl, true)
+	return locker.acquire(key, ttl, true, nil)
 }
 
-func (locker *EtcdLocker) acquire(key string, ttl int, wait bool) (Lock, error) {
+func (locker *EtcdLocker) WaitAcquireWithCallback(key string, ttl int, operationTimeoutCallback func()) (Lock, error) {
+	return locker.acquire(key, ttl, true, operationTimeoutCallback)
+}
+
+func (locker *EtcdLocker) acquire(key string, ttl int, wait bool, operationTimeoutCallback func()) (Lock, error) {
 	// A Session is a GRPC connection to ETCD API v3, the connection should be
 	// closed to release resources.
 	session, err := concurrency.NewSession(locker.client, concurrency.WithTTL(ttl))
@@ -134,11 +147,16 @@ func (locker *EtcdLocker) acquire(key string, ttl int, wait bool) (Lock, error) 
 		}
 	}
 
-	lock := &EtcdLock{mutex: mutex, Mutex: &sync.Mutex{}, session: session}
+	lock := &EtcdLock{
+		mutex:                 mutex,
+		Mutex:                 &sync.Mutex{},
+		session:               session,
+		callbackBeforeRelease: operationTimeoutCallback,
+	}
 
 	go func() {
 		time.AfterFunc(time.Duration(ttl)*time.Second, func() {
-			lock.Release()
+			lock.ReleaseOnTimeout()
 		})
 	}()
 
