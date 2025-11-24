@@ -1,7 +1,5 @@
 # etcd-lock v5.0.8
 
-[ ![Codeship Status for Scalingo/go-etcd-lock](https://app.codeship.com/projects/fda40030-9bc6-0135-f438-2e7abb19bcf1/status?branch=master)](https://app.codeship.com/projects/252772)
-
 ## Import
 
 ```
