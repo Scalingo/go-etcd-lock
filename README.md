@@ -1,4 +1,4 @@
-# etcd-lock v5.0.8
+# etcd-lock v5.0.9
 
 ## Import
 
@@ -57,13 +57,13 @@ Bump new version number in `CHANGELOG.md` and `README.md`.
 Commit, tag and create a new release:
 
 ```sh
-version="5.0.8"
+version="5.0.9"
 
 git switch --create release/${version}
 git add CHANGELOG.md README.md
 git commit --message="Bump v${version}"
 git push --set-upstream origin release/${version}
-gh pr create --reviewer=EtienneM --title "$(git log -1 --pretty=%B)"
+gh pr create --reviewer=Scalingo/team-ist --title "$(git log -1 --pretty=%B)"
 ```
 
 Once the pull request merged, you can tag the new release.
