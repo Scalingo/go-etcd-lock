@@ -76,6 +76,7 @@ type Lock interface {
 
 type EtcdLock struct {
 	*sync.Mutex
+
 	mutex   *concurrency.Mutex
 	session *concurrency.Session
 }
