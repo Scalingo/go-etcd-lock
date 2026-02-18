@@ -2,7 +2,6 @@ package lock
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -14,7 +13,7 @@ import (
 type ErrAlreadyLocked struct{}
 
 func (e *ErrAlreadyLocked) Error() string {
-	return fmt.Sprintf("key is already locked")
+	return "key is already locked"
 }
 
 type Locker interface {
