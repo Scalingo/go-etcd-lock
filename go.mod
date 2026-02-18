@@ -1,6 +1,6 @@
 module github.com/Scalingo/go-etcd-lock/v5
 
-go 1.24.0
+go 1.25
 
 require (
 	github.com/golang/mock v1.6.0
