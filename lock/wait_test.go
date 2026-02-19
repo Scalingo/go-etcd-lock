@@ -20,7 +20,7 @@ func TestWait(t *testing.T) {
 		require.NoError(t, err)
 		t2 := time.Now()
 
-		assert.Equal(t, int(t2.Sub(t1).Seconds()), 3)
+		assert.Equal(t, 3, int(t2.Sub(t1).Seconds()))
 	})
 
 	t.Run("Wait should return directly with an unlocked key", func(t *testing.T) {
@@ -30,6 +30,6 @@ func TestWait(t *testing.T) {
 		require.NoError(t, err)
 
 		t2 := time.Now()
-		assert.Equal(t, int(t2.Sub(t1).Seconds()), 0)
+		assert.Equal(t, 0, int(t2.Sub(t1).Seconds()))
 	})
 }

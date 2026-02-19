@@ -2,11 +2,10 @@ package lock
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
-	etcd "go.etcd.io/etcd/client/v3"
+	etcdv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"gopkg.in/errgo.v1"
 )
@@ -14,7 +13,7 @@ import (
 type ErrAlreadyLocked struct{}
 
 func (e *ErrAlreadyLocked) Error() string {
-	return fmt.Sprintf("key is already locked")
+	return "key is already locked"
 }
 
 type Locker interface {
@@ -24,7 +23,7 @@ type Locker interface {
 }
 
 type EtcdLocker struct {
-	client *etcd.Client
+	client *etcdv3.Client
 	// tryLockTimeout is the timeout duration for one attempt to create the lock
 	// When executing Acquire(), it will return a failed to lock error after this
 	// duration
@@ -39,7 +38,7 @@ type EtcdLocker struct {
 
 type EtcdLockerOpt func(locker *EtcdLocker)
 
-func NewEtcdLocker(client *etcd.Client, opts ...EtcdLockerOpt) Locker {
+func NewEtcdLocker(client *etcdv3.Client, opts ...EtcdLockerOpt) Locker {
 	locker := &EtcdLocker{
 		client:                  client,
 		tryLockTimeout:          30 * time.Second,
@@ -76,6 +75,7 @@ type Lock interface {
 
 type EtcdLock struct {
 	*sync.Mutex
+
 	mutex   *concurrency.Mutex
 	session *concurrency.Session
 }

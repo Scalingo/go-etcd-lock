@@ -19,7 +19,7 @@ func TestAcquire(t *testing.T) {
 
 		assert.NotNil(t, lock)
 		lock, err = locker.Acquire("/lock", 10)
-		assert.NotNil(t, err)
+		require.Error(t, err)
 		assert.IsType(t, &ErrAlreadyLocked{}, errgo.Cause(err))
 		assert.Nil(t, lock)
 	})
@@ -56,7 +56,7 @@ func TestWaitAcquire(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.NotNil(t, lock)
-			assert.Equal(t, int(t2.Sub(t1).Seconds()), 2)
+			assert.Equal(t, 2, int(t2.Sub(t1).Seconds()))
 
 			lock.Release()
 		})
@@ -69,7 +69,7 @@ func TestWaitAcquire(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.NotNil(t, lock)
-			assert.Equal(t, int(t2.Sub(t1).Seconds()), 0)
+			assert.Equal(t, 0, int(t2.Sub(t1).Seconds()))
 		})
 
 		t.Run("it should not wait more than the maxTryLockTimeout", func(t *testing.T) {
@@ -84,7 +84,7 @@ func TestWaitAcquire(t *testing.T) {
 
 			assert.IsType(t, &ErrAlreadyLocked{}, errgo.Cause(err))
 			assert.Nil(t, lock)
-			assert.Equal(t, int(t2.Sub(t1).Seconds()), 1)
+			assert.Equal(t, 1, int(t2.Sub(t1).Seconds()))
 		})
 	})
 
@@ -119,14 +119,14 @@ func TestWaitAcquire(t *testing.T) {
 			require.NoError(t, err)
 			assert.NotNil(t, lock)
 			t2 := <-ends
-			assert.Equal(t, int(t2.Sub(t1).Seconds()), 2)
+			assert.Equal(t, 2, int(t2.Sub(t1).Seconds()))
 
 			err = <-errs
 			lock = <-locks
 			require.NoError(t, err)
 			assert.NotNil(t, lock)
 			t2 = <-ends
-			assert.Equal(t, int(t2.Sub(t1).Seconds()), 4)
+			assert.Equal(t, 4, int(t2.Sub(t1).Seconds()))
 		})
 	})
 }

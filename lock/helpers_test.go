@@ -4,7 +4,7 @@ import (
 	"log"
 	"net"
 
-	etcd "go.etcd.io/etcd/client/v3"
+	etcdv3 "go.etcd.io/etcd/client/v3"
 )
 
 func init() {
@@ -15,8 +15,8 @@ func init() {
 	s.Close()
 }
 
-func client() *etcd.Client {
-	client, err := etcd.New(etcd.Config{Endpoints: []string{"http://localhost:2379"}})
+func client() *etcdv3.Client {
+	client, err := etcdv3.New(etcdv3.Config{Endpoints: []string{"http://localhost:2379"}})
 	if err != nil {
 		panic(err)
 	}
