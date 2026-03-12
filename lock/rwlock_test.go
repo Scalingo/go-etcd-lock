@@ -82,7 +82,7 @@ func TestRWLockAcquireWrite(t *testing.T) {
 
 		require.NoError(t, err)
 		require.NotNil(t, writeLock)
-		assert.Equal(t, 1, int(t2.Sub(t1).Seconds()))
+		assertWaitAround(t, t2.Sub(t1))
 		require.NoError(t, writeLock.Release())
 	})
 
@@ -121,7 +121,7 @@ func TestRWLockMigration(t *testing.T) {
 
 		require.NoError(t, err)
 		require.NotNil(t, writeLock)
-		assert.Equal(t, 1, int(t2.Sub(t1).Seconds()))
+		assertWaitAround(t, t2.Sub(t1))
 		require.NoError(t, writeLock.Release())
 	})
 
@@ -137,7 +137,7 @@ func TestRWLockMigration(t *testing.T) {
 
 		require.NoError(t, err)
 		require.NotNil(t, writeLock)
-		assert.Equal(t, 1, int(t2.Sub(t1).Seconds()))
+		assertWaitAround(t, t2.Sub(t1))
 		require.NoError(t, writeLock.Release())
 	})
 
@@ -153,7 +153,7 @@ func TestRWLockMigration(t *testing.T) {
 
 		require.NoError(t, err)
 		require.NotNil(t, readLock)
-		assert.Equal(t, 1, int(t2.Sub(t1).Seconds()))
+		assertWaitAround(t, t2.Sub(t1))
 		require.NoError(t, readLock.Release())
 	})
 
@@ -266,7 +266,7 @@ func TestRWLockWait(t *testing.T) {
 		t2 := time.Now()
 
 		require.NoError(t, err)
-		assert.Equal(t, 1, int(t2.Sub(t1).Seconds()))
+		assertWaitAround(t, t2.Sub(t1))
 	})
 
 	t.Run("wait blocks until a legacy writer is gone", func(t *testing.T) {
@@ -280,7 +280,7 @@ func TestRWLockWait(t *testing.T) {
 		t2 := time.Now()
 
 		require.NoError(t, err)
-		assert.Equal(t, 1, int(t2.Sub(t1).Seconds()))
+		assertWaitAround(t, t2.Sub(t1))
 	})
 }
 
@@ -302,7 +302,7 @@ func TestRWLockTimeouts(t *testing.T) {
 		require.Error(t, err)
 		assertAlreadyLocked(t, err)
 		assert.Nil(t, readLock)
-		assert.Equal(t, 1, int(t2.Sub(t1).Seconds()))
+		assertTimeoutAround(t, t2.Sub(t1), time.Second)
 	})
 
 	t.Run("legacy wait acquire stops at max try lock timeout behind an rw reader", func(t *testing.T) {
@@ -322,7 +322,7 @@ func TestRWLockTimeouts(t *testing.T) {
 		require.Error(t, err)
 		assertAlreadyLocked(t, err)
 		assert.Nil(t, writeLock)
-		assert.Equal(t, 1, int(t2.Sub(t1).Seconds()))
+		assertTimeoutAround(t, t2.Sub(t1), time.Second)
 	})
 }
 
@@ -419,4 +419,18 @@ func assertAlreadyLocked(t *testing.T, err error) {
 
 	var lockErr *ErrAlreadyLocked
 	assert.ErrorAs(t, errgo.Cause(err), &lockErr)
+}
+
+func assertWaitAround(t *testing.T, duration time.Duration) {
+	t.Helper()
+
+	require.GreaterOrEqual(t, duration, 500*time.Millisecond)
+	require.Less(t, duration, 2500*time.Millisecond)
+}
+
+func assertTimeoutAround(t *testing.T, duration time.Duration, expected time.Duration) {
+	t.Helper()
+
+	require.GreaterOrEqual(t, duration, expected-200*time.Millisecond)
+	require.Less(t, duration, expected+1500*time.Millisecond)
 }

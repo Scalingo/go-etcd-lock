@@ -13,6 +13,8 @@ import (
 	"gopkg.in/errgo.v1"
 )
 
+// RW readers live under the same legacy queue prefix but in their own
+// subdirectory so old writers still see them as earlier queue entries.
 const rwReaderDirectory = "__rwlock-readers"
 
 type RWLocker interface {
@@ -98,20 +100,16 @@ func (locker *EtcdRWLocker) acquireRead(key string, ttl int, wait bool) (Lock, e
 	myRev, err := locker.createReaderKey(lock.lockKey, session.Lease())
 	if err != nil {
 		closeErr := closeRWSession(session)
-		if closeErr != nil {
-			return nil, closeErr
-		}
-		return nil, errgo.Notef(err, "fail to acquire read lock")
+		return nil, noteAcquireFailure(err, closeErr, "fail to acquire read lock")
 	}
 
 	for {
+		// A reader may proceed alongside other readers, but it must not bypass any
+		// earlier legacy writer or RW writer already queued on the same lock key.
 		writerAhead, err := locker.hasEarlierWriter(resourceKey, myRev-1)
 		if err != nil {
 			releaseErr := lock.Release()
-			if releaseErr != nil {
-				return nil, releaseErr
-			}
-			return nil, errgo.Notef(err, "fail to acquire read lock")
+			return nil, noteAcquireFailure(err, releaseErr, "fail to acquire read lock")
 		}
 		if !writerAhead {
 			locker.scheduleRelease(lock, ttl)
@@ -129,6 +127,8 @@ func (locker *EtcdRWLocker) acquireRead(key string, ttl int, wait bool) (Lock, e
 }
 
 func (locker *EtcdRWLocker) writeLocker() *EtcdLocker {
+	// RW writes intentionally reuse the legacy lock path so old and new writers
+	// compete on exactly the same etcd entries during rollout.
 	return &EtcdLocker{
 		client:                  locker.client,
 		tryLockTimeout:          locker.tryLockTimeout,
@@ -174,6 +174,8 @@ func (locker *EtcdRWLocker) hasEarlierWriter(resourceKey string, maxCreateRev in
 	}
 
 	readerPrefix := rwReadersPrefix(resourceKey)
+	// Anything in the shared queue that is not under the reader subtree is a
+	// writer entry, either from the legacy locker or from RW AcquireWrite.
 	for _, kv := range resp.Kvs {
 		if !strings.HasPrefix(string(kv.Key), readerPrefix) {
 			return true, nil
@@ -233,4 +235,12 @@ func rwReadersPrefix(resourceKey string) string {
 
 func rwReaderKey(resourceKey string, leaseID etcdv3.LeaseID) string {
 	return fmt.Sprintf("%s%x", rwReadersPrefix(resourceKey), leaseID)
+}
+
+func noteAcquireFailure(err error, cleanupErr error, message string) error {
+	if cleanupErr == nil {
+		return errgo.Notef(err, "%s", message)
+	}
+
+	return errgo.Notef(err, "%s (additionally failed cleanup: %v)", message, cleanupErr)
 }
