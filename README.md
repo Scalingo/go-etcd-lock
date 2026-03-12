@@ -33,6 +33,28 @@ if err != nil {
 }
 ```
 
+## Reader / Writer Lock
+
+Use `NewEtcdRWLocker` when you want shared readers and exclusive writers without changing the existing lock behavior.
+
+```go
+locker := lock.NewEtcdRWLocker(client)
+
+readLock, err := locker.AcquireRead("/name", 60)
+if err != nil {
+	panic(err)
+}
+defer readLock.Release()
+```
+
+```go
+writeLock, err := locker.WaitAcquireWrite("/name", 60)
+if err != nil {
+	panic(err)
+}
+defer writeLock.Release()
+```
+
 ## Testing
 
 You need a etcd instance running on `localhost:2379`, then:
@@ -41,6 +63,15 @@ You need a etcd instance running on `localhost:2379`, then:
 go test ./...
 ```
 
+## Generate mock
+
+From the `/lock/` folder:
+
+```
+mockgen -build_flags=--mod=mod -destination lockmock/locker_mock.go -package lockmock github.com/Scalingo/go-etcd-lock/v5/lock Locker
+mockgen -build_flags=--mod=mod -destination lockmock/gomock_rw_locker.go -package lockmock github.com/Scalingo/go-etcd-lock/v5/lock RWLocker
+mockgen -build_flags=--mod=mod -destination lockmock/lock_mock.go -package lockmock github.com/Scalingo/go-etcd-lock/v5/lock Lock
+```
 ## Release a New Version
 
 Bump new version number in:
