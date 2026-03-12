@@ -16,21 +16,27 @@ func TestRWLockAcquireRead(t *testing.T) {
 	t.Run("read locks can be acquired concurrently", func(t *testing.T) {
 		lock1, err := locker.AcquireRead("/rw-read-shared", 3)
 		require.NoError(t, err)
-		defer lock1.Release()
+		t.Cleanup(func() {
+			require.NoError(t, lock1.Release())
+		})
 
 		lock2, err := locker.AcquireRead("/rw-read-shared", 3)
 		require.NoError(t, err)
-		defer lock2.Release()
+		t.Cleanup(func() {
+			require.NoError(t, lock2.Release())
+		})
 	})
 
 	t.Run("a read lock cannot be acquired while a writer holds the lock", func(t *testing.T) {
 		lock, err := locker.AcquireWrite("/rw-read-blocked", 3)
 		require.NoError(t, err)
-		defer lock.Release()
+		t.Cleanup(func() {
+			require.NoError(t, lock.Release())
+		})
 
 		readLock, err := locker.AcquireRead("/rw-read-blocked", 3)
 		require.Error(t, err)
-		assert.IsType(t, &ErrAlreadyLocked{}, errgo.Cause(err))
+		assertAlreadyLocked(t, err)
 		assert.Nil(t, readLock)
 	})
 
@@ -38,11 +44,13 @@ func TestRWLockAcquireRead(t *testing.T) {
 		legacyLocker := testLegacyLocker()
 		lock, err := legacyLocker.Acquire("/rw-legacy-write-blocks-read", 3)
 		require.NoError(t, err)
-		defer lock.Release()
+		t.Cleanup(func() {
+			require.NoError(t, lock.Release())
+		})
 
 		readLock, err := locker.AcquireRead("/rw-legacy-write-blocks-read", 3)
 		require.Error(t, err)
-		assert.IsType(t, &ErrAlreadyLocked{}, errgo.Cause(err))
+		assertAlreadyLocked(t, err)
 		assert.Nil(t, readLock)
 	})
 }
@@ -53,11 +61,13 @@ func TestRWLockAcquireWrite(t *testing.T) {
 	t.Run("a write lock cannot be acquired while readers hold the lock", func(t *testing.T) {
 		lock, err := locker.AcquireRead("/rw-write-blocked", 3)
 		require.NoError(t, err)
-		defer lock.Release()
+		t.Cleanup(func() {
+			require.NoError(t, lock.Release())
+		})
 
 		writeLock, err := locker.AcquireWrite("/rw-write-blocked", 3)
 		require.Error(t, err)
-		assert.IsType(t, &ErrAlreadyLocked{}, errgo.Cause(err))
+		assertAlreadyLocked(t, err)
 		assert.Nil(t, writeLock)
 	})
 
@@ -79,15 +89,19 @@ func TestRWLockAcquireWrite(t *testing.T) {
 	t.Run("a writer waits for all active readers", func(t *testing.T) {
 		lock1, err := locker.AcquireRead("/rw-multi-reader-block", 3)
 		require.NoError(t, err)
-		defer lock1.Release()
+		t.Cleanup(func() {
+			require.NoError(t, lock1.Release())
+		})
 
 		lock2, err := locker.AcquireRead("/rw-multi-reader-block", 3)
 		require.NoError(t, err)
-		defer lock2.Release()
+		t.Cleanup(func() {
+			require.NoError(t, lock2.Release())
+		})
 
 		writeLock, err := locker.AcquireWrite("/rw-multi-reader-block", 3)
 		require.Error(t, err)
-		assert.IsType(t, &ErrAlreadyLocked{}, errgo.Cause(err))
+		assertAlreadyLocked(t, err)
 		assert.Nil(t, writeLock)
 	})
 }
@@ -277,14 +291,16 @@ func TestRWLockTimeouts(t *testing.T) {
 
 		lock, err := legacyLocker.Acquire("/legacy-write-read-timeout", 3)
 		require.NoError(t, err)
-		defer lock.Release()
+		t.Cleanup(func() {
+			require.NoError(t, lock.Release())
+		})
 
 		t1 := time.Now()
 		readLock, err := rwLocker.WaitAcquireRead("/legacy-write-read-timeout", 3)
 		t2 := time.Now()
 
 		require.Error(t, err)
-		assert.IsType(t, &ErrAlreadyLocked{}, errgo.Cause(err))
+		assertAlreadyLocked(t, err)
 		assert.Nil(t, readLock)
 		assert.Equal(t, 1, int(t2.Sub(t1).Seconds()))
 	})
@@ -295,14 +311,16 @@ func TestRWLockTimeouts(t *testing.T) {
 
 		lock, err := rwLocker.AcquireRead("/rw-read-legacy-timeout", 3)
 		require.NoError(t, err)
-		defer lock.Release()
+		t.Cleanup(func() {
+			require.NoError(t, lock.Release())
+		})
 
 		t1 := time.Now()
 		writeLock, err := legacyLocker.WaitAcquire("/rw-read-legacy-timeout", 3)
 		t2 := time.Now()
 
 		require.Error(t, err)
-		assert.IsType(t, &ErrAlreadyLocked{}, errgo.Cause(err))
+		assertAlreadyLocked(t, err)
 		assert.Nil(t, writeLock)
 		assert.Equal(t, 1, int(t2.Sub(t1).Seconds()))
 	})
@@ -389,9 +407,16 @@ func waitUntilReadIsBlockedByWriter(t *testing.T, locker RWLocker, key string) {
 			continue
 		}
 
-		assert.IsType(t, &ErrAlreadyLocked{}, errgo.Cause(err))
+		assertAlreadyLocked(t, err)
 		return
 	}
 
 	t.Fatalf("reader was never blocked by a pending writer for key %q", key)
+}
+
+func assertAlreadyLocked(t *testing.T, err error) {
+	t.Helper()
+
+	var lockErr *ErrAlreadyLocked
+	assert.ErrorAs(t, errgo.Cause(err), &lockErr)
 }
