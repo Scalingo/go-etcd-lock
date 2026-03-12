@@ -1,12 +1,14 @@
 package lock
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	etcdv3 "go.etcd.io/etcd/client/v3"
 	"gopkg.in/errgo.v1"
 )
 
@@ -173,7 +175,7 @@ func TestRWLockMigration(t *testing.T) {
 			writeAt <- time.Now()
 		}()
 
-		waitUntilReadIsBlockedByWriter(t, rwLocker, "/rw-pending-legacy-writer")
+		waitUntilLegacyWriterQueued(t, "/rw-pending-legacy-writer")
 
 		readErr := make(chan error, 1)
 		readReady := make(chan Lock, 1)
@@ -225,7 +227,7 @@ func TestRWLockMigration(t *testing.T) {
 			writeReady <- lock
 		}()
 
-		waitUntilReadIsBlockedByWriter(t, rwLocker, "/rw-many-readers-legacy-writer")
+		waitUntilLegacyWriterQueued(t, "/rw-many-readers-legacy-writer")
 
 		readErr := make(chan error, 1)
 		readReady := make(chan Lock, 1)
@@ -395,23 +397,29 @@ func testLegacyLocker(opts ...EtcdLockerOpt) Locker {
 	return NewEtcdLocker(client(), base...)
 }
 
-func waitUntilReadIsBlockedByWriter(t *testing.T, locker RWLocker, key string) {
+func waitUntilLegacyWriterQueued(t *testing.T, key string) {
 	t.Helper()
+
+	resourceKey := addPrefix(key)
+	queuePrefix := rwQueuePrefix(resourceKey)
+	readerPrefix := rwReadersPrefix(resourceKey)
+	cli := client()
+	defer cli.Close()
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		lock, err := locker.AcquireRead(key, 1)
-		if err == nil {
-			require.NoError(t, lock.Release())
-			time.Sleep(20 * time.Millisecond)
-			continue
+		resp, err := cli.Get(t.Context(), queuePrefix, etcdv3.WithPrefix())
+		require.NoError(t, err)
+		for _, kv := range resp.Kvs {
+			if !strings.HasPrefix(string(kv.Key), readerPrefix) {
+				return
+			}
 		}
 
-		assertAlreadyLocked(t, err)
-		return
+		time.Sleep(20 * time.Millisecond)
 	}
 
-	t.Fatalf("reader was never blocked by a pending writer for key %q", key)
+	t.Fatalf("legacy writer was never observed in queue for key %q", key)
 }
 
 func assertAlreadyLocked(t *testing.T, err error) {
