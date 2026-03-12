@@ -3,6 +3,7 @@ package lock
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 	"gopkg.in/errgo.v1"
 )
 
-const rwLockNamespace = "/__rwlock"
+const rwReaderDirectory = "__rwlock-readers"
 
 type RWLocker interface {
 	AcquireRead(key string, ttl int) (Lock, error)
@@ -69,30 +70,15 @@ func (locker *EtcdRWLocker) WaitAcquireRead(key string, ttl int) (Lock, error) {
 }
 
 func (locker *EtcdRWLocker) AcquireWrite(key string, ttl int) (Lock, error) {
-	return locker.acquireWrite(key, ttl, false)
+	return locker.writeLocker().Acquire(key, ttl)
 }
 
 func (locker *EtcdRWLocker) WaitAcquireWrite(key string, ttl int) (Lock, error) {
-	return locker.acquireWrite(key, ttl, true)
+	return locker.writeLocker().WaitAcquire(key, ttl)
 }
 
 func (locker *EtcdRWLocker) Wait(key string) error {
-	resourceKey := addPrefix(key)
-	deadline := time.Now().Add(locker.maxTryLockTimeout)
-
-	for {
-		locked, err := locker.isLocked(resourceKey)
-		if err != nil {
-			return errgo.Notef(err, "fail to wait for lock")
-		}
-		if !locked {
-			return nil
-		}
-		if time.Now().After(deadline) {
-			return &ErrAlreadyLocked{}
-		}
-		time.Sleep(locker.cooldownTryLockDuration)
-	}
+	return locker.writeLocker().Wait(key)
 }
 
 func (locker *EtcdRWLocker) acquireRead(key string, ttl int, wait bool) (Lock, error) {
@@ -109,78 +95,25 @@ func (locker *EtcdRWLocker) acquireRead(key string, ttl int, wait bool) (Lock, e
 		lockKey: rwReaderKey(resourceKey, session.Lease()),
 	}
 	deadline := time.Now().Add(locker.maxTryLockTimeout)
+	myRev, err := locker.createReaderKey(lock.lockKey, session.Lease())
+	if err != nil {
+		closeErr := closeRWSession(session)
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		return nil, errgo.Notef(err, "fail to acquire read lock")
+	}
 
 	for {
-		acquired, err := locker.tryCreateReadLock(resourceKey, lock.lockKey, session.Lease())
+		writerAhead, err := locker.hasEarlierWriter(resourceKey, myRev-1)
 		if err != nil {
-			closeErr := closeRWSession(session)
-			if closeErr != nil {
-				return nil, closeErr
+			releaseErr := lock.Release()
+			if releaseErr != nil {
+				return nil, releaseErr
 			}
 			return nil, errgo.Notef(err, "fail to acquire read lock")
 		}
-		if acquired {
-			locker.scheduleRelease(lock, ttl)
-			return lock, nil
-		}
-		if !wait || time.Now().After(deadline) {
-			closeErr := closeRWSession(session)
-			if closeErr != nil {
-				return nil, closeErr
-			}
-			return nil, &ErrAlreadyLocked{}
-		}
-		time.Sleep(locker.cooldownTryLockDuration)
-	}
-}
-
-func (locker *EtcdRWLocker) acquireWrite(key string, ttl int, wait bool) (Lock, error) {
-	session, err := concurrency.NewSession(locker.client, concurrency.WithTTL(ttl))
-	if err != nil {
-		return nil, err
-	}
-
-	resourceKey := addPrefix(key)
-	lock := &EtcdRWLock{
-		Mutex:   &sync.Mutex{},
-		client:  locker.client,
-		session: session,
-		lockKey: rwWriterKey(resourceKey),
-	}
-	deadline := time.Now().Add(locker.maxTryLockTimeout)
-
-	for {
-		acquired, err := locker.tryCreateWriteLock(lock.lockKey, session.Lease())
-		if err != nil {
-			closeErr := closeRWSession(session)
-			if closeErr != nil {
-				return nil, closeErr
-			}
-			return nil, errgo.Notef(err, "fail to acquire write lock")
-		}
-		if acquired {
-			break
-		}
-		if !wait || time.Now().After(deadline) {
-			closeErr := closeRWSession(session)
-			if closeErr != nil {
-				return nil, closeErr
-			}
-			return nil, &ErrAlreadyLocked{}
-		}
-		time.Sleep(locker.cooldownTryLockDuration)
-	}
-
-	for {
-		lockedByReader, err := locker.hasActiveReaders(resourceKey)
-		if err != nil {
-			releaseErr := lock.Release()
-			if releaseErr != nil {
-				return nil, releaseErr
-			}
-			return nil, errgo.Notef(err, "fail to acquire write lock")
-		}
-		if !lockedByReader {
+		if !writerAhead {
 			locker.scheduleRelease(lock, ttl)
 			return lock, nil
 		}
@@ -195,22 +128,16 @@ func (locker *EtcdRWLocker) acquireWrite(key string, ttl int, wait bool) (Lock, 
 	}
 }
 
-func (locker *EtcdRWLocker) tryCreateReadLock(resourceKey, lockKey string, leaseID etcdv3.LeaseID) (bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), locker.tryLockTimeout)
-	defer cancel()
-
-	resp, err := locker.client.Txn(ctx).
-		If(etcdv3.Compare(etcdv3.CreateRevision(rwWriterKey(resourceKey)), "=", 0)).
-		Then(etcdv3.OpPut(lockKey, "", etcdv3.WithLease(leaseID))).
-		Commit()
-	if err != nil {
-		return false, err
+func (locker *EtcdRWLocker) writeLocker() *EtcdLocker {
+	return &EtcdLocker{
+		client:                  locker.client,
+		tryLockTimeout:          locker.tryLockTimeout,
+		maxTryLockTimeout:       locker.maxTryLockTimeout,
+		cooldownTryLockDuration: locker.cooldownTryLockDuration,
 	}
-
-	return resp.Succeeded, nil
 }
 
-func (locker *EtcdRWLocker) tryCreateWriteLock(lockKey string, leaseID etcdv3.LeaseID) (bool, error) {
+func (locker *EtcdRWLocker) createReaderKey(lockKey string, leaseID etcdv3.LeaseID) (int64, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), locker.tryLockTimeout)
 	defer cancel()
 
@@ -219,41 +146,40 @@ func (locker *EtcdRWLocker) tryCreateWriteLock(lockKey string, leaseID etcdv3.Le
 		Then(etcdv3.OpPut(lockKey, "", etcdv3.WithLease(leaseID))).
 		Commit()
 	if err != nil {
-		return false, err
+		return 0, err
+	}
+	if !resp.Succeeded {
+		return 0, errgo.Newf("reader key %q already exists", lockKey)
 	}
 
-	return resp.Succeeded, nil
+	return resp.Header.Revision, nil
 }
 
-func (locker *EtcdRWLocker) hasActiveReaders(resourceKey string) (bool, error) {
+func (locker *EtcdRWLocker) hasEarlierWriter(resourceKey string, maxCreateRev int64) (bool, error) {
+	if maxCreateRev <= 0 {
+		return false, nil
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), locker.tryLockTimeout)
 	defer cancel()
 
-	resp, err := locker.client.Get(ctx, rwReadersPrefix(resourceKey), etcdv3.WithPrefix(), etcdv3.WithLimit(1))
+	resp, err := locker.client.Get(
+		ctx,
+		rwQueuePrefix(resourceKey),
+		etcdv3.WithPrefix(),
+		etcdv3.WithMaxCreateRev(maxCreateRev),
+	)
 	if err != nil {
 		return false, err
 	}
 
-	return len(resp.Kvs) > 0, nil
-}
-
-func (locker *EtcdRWLocker) isLocked(resourceKey string) (bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), locker.tryLockTimeout)
-	defer cancel()
-
-	resp, err := locker.client.Txn(ctx).
-		Then(
-			etcdv3.OpGet(rwWriterKey(resourceKey)),
-			etcdv3.OpGet(rwReadersPrefix(resourceKey), etcdv3.WithPrefix(), etcdv3.WithLimit(1)),
-		).
-		Commit()
-	if err != nil {
-		return false, err
+	readerPrefix := rwReadersPrefix(resourceKey)
+	for _, kv := range resp.Kvs {
+		if !strings.HasPrefix(string(kv.Key), readerPrefix) {
+			return true, nil
+		}
 	}
-
-	writerHeld := len(resp.Responses[0].GetResponseRange().Kvs) > 0
-	readerHeld := len(resp.Responses[1].GetResponseRange().Kvs) > 0
-	return writerHeld || readerHeld, nil
+	return false, nil
 }
 
 func (locker *EtcdRWLocker) scheduleRelease(lock *EtcdRWLock, ttl int) {
@@ -297,12 +223,12 @@ func closeRWSession(session *concurrency.Session) error {
 	return err
 }
 
-func rwWriterKey(resourceKey string) string {
-	return fmt.Sprintf("%s%s/writer", resourceKey, rwLockNamespace)
+func rwQueuePrefix(resourceKey string) string {
+	return fmt.Sprintf("%s/", resourceKey)
 }
 
 func rwReadersPrefix(resourceKey string) string {
-	return fmt.Sprintf("%s%s/readers/", resourceKey, rwLockNamespace)
+	return fmt.Sprintf("%s%s/", rwQueuePrefix(resourceKey), rwReaderDirectory)
 }
 
 func rwReaderKey(resourceKey string, leaseID etcdv3.LeaseID) string {
