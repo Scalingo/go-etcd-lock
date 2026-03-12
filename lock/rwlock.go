@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"go.etcd.io/etcd/api/v3/mvccpb"
 	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	etcdv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -16,6 +17,10 @@ import (
 // RW readers live under the same legacy queue prefix but in their own
 // subdirectory so old writers still see them as earlier queue entries.
 const rwReaderDirectory = "__rwlock-readers"
+
+// Waiting writers publish an intent key outside the legacy mutex queue so RW
+// readers can see pending writers without changing the legacy lock ordering.
+const rwWriterIntentDirectory = "__rwlock-writer-intents"
 
 type RWLocker interface {
 	AcquireRead(key string, ttl int) (Lock, error)
@@ -84,28 +89,43 @@ func (locker *EtcdRWLocker) Wait(key string) error {
 }
 
 func (locker *EtcdRWLocker) acquireRead(key string, ttl int, wait bool) (Lock, error) {
-	session, err := concurrency.NewSession(locker.client, concurrency.WithTTL(ttl))
-	if err != nil {
-		return nil, err
-	}
-
 	resourceKey := addPrefix(key)
-	lock := &EtcdRWLock{
-		Mutex:   &sync.Mutex{},
-		client:  locker.client,
-		session: session,
-		lockKey: rwReaderKey(resourceKey, session.Lease()),
-	}
 	deadline := time.Now().Add(locker.maxTryLockTimeout)
-	myRev, err := locker.createReaderKey(lock.lockKey, session.Lease())
-	if err != nil {
-		closeErr := closeRWSession(session)
-		return nil, noteAcquireFailure(err, closeErr, "fail to acquire read lock")
-	}
 
 	for {
+		writerPresent, err := locker.hasAnyWriter(resourceKey)
+		if err != nil {
+			return nil, errgo.Notef(err, "fail to acquire read lock")
+		}
+		if writerPresent {
+			if !wait || time.Now().After(deadline) {
+				return nil, &ErrAlreadyLocked{}
+			}
+			time.Sleep(locker.cooldownTryLockDuration)
+			continue
+		}
+
+		session, err := concurrency.NewSession(locker.client, concurrency.WithTTL(ttl))
+		if err != nil {
+			return nil, err
+		}
+
+		lock := &EtcdRWLock{
+			Mutex:   &sync.Mutex{},
+			client:  locker.client,
+			session: session,
+			lockKey: rwReaderKey(resourceKey, session.Lease()),
+		}
+		myRev, err := locker.createReaderKey(lock.lockKey, session.Lease())
+		if err != nil {
+			closeErr := closeRWSession(session)
+			return nil, noteAcquireFailure(err, closeErr, "fail to acquire read lock")
+		}
+
 		// A reader may proceed alongside other readers, but it must not bypass any
 		// earlier legacy writer or RW writer already queued on the same lock key.
+		// If such a writer exists, the reader drops its provisional queue entry and
+		// retries later so it cannot trap a retrying legacy waiter behind itself.
 		writerAhead, err := locker.hasEarlierWriter(resourceKey, myRev-1)
 		if err != nil {
 			releaseErr := lock.Release()
@@ -115,11 +135,11 @@ func (locker *EtcdRWLocker) acquireRead(key string, ttl int, wait bool) (Lock, e
 			locker.scheduleRelease(lock, ttl)
 			return lock, nil
 		}
+		releaseErr := lock.Release()
+		if releaseErr != nil {
+			return nil, noteAcquireFailure(&ErrAlreadyLocked{}, releaseErr, "fail to acquire read lock")
+		}
 		if !wait || time.Now().After(deadline) {
-			releaseErr := lock.Release()
-			if releaseErr != nil {
-				return nil, releaseErr
-			}
 			return nil, &ErrAlreadyLocked{}
 		}
 		time.Sleep(locker.cooldownTryLockDuration)
@@ -160,28 +180,53 @@ func (locker *EtcdRWLocker) hasEarlierWriter(resourceKey string, maxCreateRev in
 		return false, nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), locker.tryLockTimeout)
-	defer cancel()
-
-	resp, err := locker.client.Get(
-		ctx,
-		rwQueuePrefix(resourceKey),
-		etcdv3.WithPrefix(),
-		etcdv3.WithMaxCreateRev(maxCreateRev),
-	)
+	intentResp, resp, err := locker.writerState(resourceKey, etcdv3.WithMaxCreateRev(maxCreateRev))
 	if err != nil {
 		return false, err
 	}
-
-	readerPrefix := rwReadersPrefix(resourceKey)
-	// Anything in the shared queue that is not under the reader subtree is a
-	// writer entry, either from the legacy locker or from RW AcquireWrite.
-	for _, kv := range resp.Kvs {
-		if !strings.HasPrefix(string(kv.Key), readerPrefix) {
-			return true, nil
-		}
+	if len(intentResp.Kvs) > 0 {
+		return true, nil
 	}
-	return false, nil
+
+	return queueContainsWriter(resourceKey, resp.Kvs), nil
+}
+
+func (locker *EtcdRWLocker) hasAnyWriter(resourceKey string) (bool, error) {
+	intentResp, resp, err := locker.writerState(resourceKey)
+	if err != nil {
+		return false, err
+	}
+	if len(intentResp.Kvs) > 0 {
+		return true, nil
+	}
+
+	return queueContainsWriter(resourceKey, resp.Kvs), nil
+}
+
+func (locker *EtcdRWLocker) writerState(resourceKey string, opts ...etcdv3.OpOption) (*etcdv3.GetResponse, *etcdv3.GetResponse, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), locker.tryLockTimeout)
+	defer cancel()
+
+	queueOpts := append([]etcdv3.OpOption{etcdv3.WithPrefix()}, opts...)
+	resp, err := locker.client.Get(
+		ctx,
+		rwQueuePrefix(resourceKey),
+		queueOpts...,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	intentOpts := append([]etcdv3.OpOption{etcdv3.WithPrefix(), etcdv3.WithLimit(1)}, opts...)
+	intentResp, err := locker.client.Get(
+		ctx,
+		rwWriterIntentsPrefix(resourceKey),
+		intentOpts...,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return intentResp, resp, nil
 }
 
 func (locker *EtcdRWLocker) scheduleRelease(lock *EtcdRWLock, ttl int) {
@@ -237,10 +282,30 @@ func rwReaderKey(resourceKey string, leaseID etcdv3.LeaseID) string {
 	return fmt.Sprintf("%s%x", rwReadersPrefix(resourceKey), leaseID)
 }
 
+func rwWriterIntentsPrefix(resourceKey string) string {
+	return fmt.Sprintf("%s.%s/", resourceKey, rwWriterIntentDirectory)
+}
+
+func rwWriterIntentKey(resourceKey string, leaseID etcdv3.LeaseID) string {
+	return fmt.Sprintf("%s%x", rwWriterIntentsPrefix(resourceKey), leaseID)
+}
+
 func noteAcquireFailure(err error, cleanupErr error, message string) error {
 	if cleanupErr == nil {
 		return errgo.Notef(err, "%s", message)
 	}
 
 	return errgo.Notef(err, "%s (additionally failed cleanup: %v)", message, cleanupErr)
+}
+
+func queueContainsWriter(resourceKey string, kvs []*mvccpb.KeyValue) bool {
+	readerPrefix := rwReadersPrefix(resourceKey)
+	// Anything in the shared queue that is not under the reader subtree is a
+	// writer entry, either from the legacy locker or from RW AcquireWrite.
+	for _, kv := range kvs {
+		if !strings.HasPrefix(string(kv.Key), readerPrefix) {
+			return true
+		}
+	}
+	return false
 }
