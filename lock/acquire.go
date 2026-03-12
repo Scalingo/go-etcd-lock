@@ -98,40 +98,19 @@ func (locker *EtcdLocker) acquire(key string, ttl int, wait bool) (Lock, error) 
 
 	key = addPrefix(key)
 	mutex := concurrency.NewMutex(session, key)
-	timeout := time.NewTimer(locker.maxTryLockTimeout)
 
-	var tryLockErr error
-	for {
-		// If we've wait more than the maxTryLockTimeout, we stop waiting and
-		// consider the lock already taken.
-		select {
-		case <-timeout.C:
-			session.Close()
-			if tryLockErr == context.DeadlineExceeded {
-				return nil, &ErrAlreadyLocked{}
-			} else {
-				return nil, errgo.Notef(tryLockErr, "fail to acquire lock")
-			}
-		default:
-		}
-
-		// Otherwise we try locking:
-		// * If the attempt fails and we're still waiting, we retry the operation after a short cooldown
-		// * if the attempt fails and we're not waiting, the lock is already taken
-		// * if the attempt succeeded, keep on
-		tryLockErr = locker.tryLock(mutex)
-
-		shouldWait := wait && tryLockErr == context.DeadlineExceeded
-		shouldRetry := shouldWait || (tryLockErr != nil && tryLockErr != context.DeadlineExceeded)
-		if shouldRetry {
-			time.Sleep(locker.cooldownTryLockDuration)
-			continue
-		} else if tryLockErr == context.DeadlineExceeded {
-			session.Close()
+	var lockErr error
+	if wait {
+		lockErr = locker.waitLock(mutex)
+	} else {
+		lockErr = locker.tryLock(mutex)
+	}
+	if lockErr != nil {
+		session.Close()
+		if lockErr == context.DeadlineExceeded {
 			return nil, &ErrAlreadyLocked{}
-		} else {
-			break
 		}
+		return nil, errgo.Notef(lockErr, "fail to acquire lock")
 	}
 
 	lock := &EtcdLock{mutex: mutex, Mutex: &sync.Mutex{}, session: session}
@@ -147,6 +126,12 @@ func (locker *EtcdLocker) acquire(key string, ttl int, wait bool) (Lock, error) 
 
 func (locker *EtcdLocker) tryLock(mutex *concurrency.Mutex) error {
 	ctx, cancel := context.WithTimeout(context.Background(), locker.tryLockTimeout)
+	defer cancel()
+	return mutex.Lock(ctx)
+}
+
+func (locker *EtcdLocker) waitLock(mutex *concurrency.Mutex) error {
+	ctx, cancel := context.WithTimeout(context.Background(), locker.maxTryLockTimeout)
 	defer cancel()
 	return mutex.Lock(ctx)
 }

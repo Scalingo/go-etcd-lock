@@ -159,12 +159,11 @@ func TestRWLockMigration(t *testing.T) {
 			writeAt <- time.Now()
 		}()
 
-		time.Sleep(200 * time.Millisecond)
+		waitUntilReadIsBlockedByWriter(t, rwLocker, "/rw-pending-legacy-writer")
 
 		readErr := make(chan error, 1)
 		readReady := make(chan Lock, 1)
 		readAt := make(chan time.Time, 1)
-		t1 := time.Now()
 		go func() {
 			lock, err := rwLocker.WaitAcquireRead("/rw-pending-legacy-writer", 1)
 			readErr <- err
@@ -177,7 +176,12 @@ func TestRWLockMigration(t *testing.T) {
 		require.NotNil(t, writeLock)
 		writerAcquiredAt := <-writeAt
 
-		time.Sleep(200 * time.Millisecond)
+		select {
+		case err := <-readErr:
+			t.Fatalf("reader acquired before the legacy writer was released: %v", err)
+		default:
+		}
+
 		require.NoError(t, writeLock.Release())
 
 		require.NoError(t, <-readErr)
@@ -185,8 +189,7 @@ func TestRWLockMigration(t *testing.T) {
 		require.NotNil(t, nextReadLock)
 		readerAcquiredAt := <-readAt
 
-		assert.GreaterOrEqual(t, int(readerAcquiredAt.Sub(t1).Seconds()), 1)
-		assert.False(t, readerAcquiredAt.Before(writerAcquiredAt))
+		assert.True(t, readerAcquiredAt.After(writerAcquiredAt) || readerAcquiredAt.Equal(writerAcquiredAt))
 		require.NoError(t, nextReadLock.Release())
 	})
 
@@ -208,7 +211,7 @@ func TestRWLockMigration(t *testing.T) {
 			writeReady <- lock
 		}()
 
-		time.Sleep(200 * time.Millisecond)
+		waitUntilReadIsBlockedByWriter(t, rwLocker, "/rw-many-readers-legacy-writer")
 
 		readErr := make(chan error, 1)
 		readReady := make(chan Lock, 1)
@@ -221,6 +224,13 @@ func TestRWLockMigration(t *testing.T) {
 		require.NoError(t, <-writeErr)
 		writeLock := <-writeReady
 		require.NotNil(t, writeLock)
+
+		select {
+		case err := <-readErr:
+			t.Fatalf("reader acquired before the pending legacy writer was released: %v", err)
+		default:
+		}
+
 		require.NoError(t, writeLock.Release())
 		require.NoError(t, <-readErr)
 		nextReadLock := <-readReady
@@ -365,4 +375,23 @@ func testLegacyLocker(opts ...EtcdLockerOpt) Locker {
 	}
 	base = append(base, opts...)
 	return NewEtcdLocker(client(), base...)
+}
+
+func waitUntilReadIsBlockedByWriter(t *testing.T, locker RWLocker, key string) {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		lock, err := locker.AcquireRead(key, 1)
+		if err == nil {
+			require.NoError(t, lock.Release())
+			time.Sleep(20 * time.Millisecond)
+			continue
+		}
+
+		assert.IsType(t, &ErrAlreadyLocked{}, errgo.Cause(err))
+		return
+	}
+
+	t.Fatalf("reader was never blocked by a pending writer for key %q", key)
 }
