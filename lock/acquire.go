@@ -131,7 +131,21 @@ func (locker *EtcdLocker) tryLock(mutex *concurrency.Mutex) error {
 }
 
 func (locker *EtcdLocker) waitLock(mutex *concurrency.Mutex) error {
-	ctx, cancel := context.WithTimeout(context.Background(), locker.maxTryLockTimeout)
-	defer cancel()
-	return mutex.Lock(ctx)
+	deadline := time.Now().Add(locker.maxTryLockTimeout)
+
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return context.DeadlineExceeded
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), remaining)
+		err := mutex.Lock(ctx)
+		cancel()
+		if err == nil || err == context.DeadlineExceeded {
+			return err
+		}
+
+		time.Sleep(locker.cooldownTryLockDuration)
+	}
 }
