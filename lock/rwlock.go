@@ -224,7 +224,7 @@ func closeRWSession(session *concurrency.Session) error {
 }
 
 func rwQueuePrefix(resourceKey string) string {
-	return fmt.Sprintf("%s/", resourceKey)
+	return resourceKey + "/"
 }
 
 func rwReadersPrefix(resourceKey string) string {
