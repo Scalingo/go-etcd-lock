@@ -83,6 +83,8 @@ if err != nil {
 defer writeLock.Release()
 ```
 
+If you acquire a read lock and later decide the resource must be changed, you can upgrade that read lock to a write lock with `(*lock.EtcdRWLock).Upgrade()` or `WaitUpgrade()`. The upgrade releases the read lock before taking the write lock, so you must re-read or re-validate the protected resource once the write lock has been granted.
+
 ## Testing
 
 You need a etcd instance running on `localhost:2379`, then:
