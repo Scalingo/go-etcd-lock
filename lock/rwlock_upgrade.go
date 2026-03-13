@@ -5,9 +5,11 @@ import (
 	"sync"
 	"time"
 
+	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	etcdv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
-	"gopkg.in/errgo.v1"
+
+	"github.com/Scalingo/go-utils/errors/v3"
 )
 
 // Upgrade tries to turn a read lock into a write lock without waiting.
@@ -26,8 +28,10 @@ func (l *EtcdRWLock) WaitUpgrade() (Lock, error) {
 }
 
 func (l *EtcdRWLock) upgrade(wait bool) (Lock, error) {
+	ctx := context.Background()
+
 	if l == nil {
-		return nil, errgo.New("nil lock")
+		return nil, errors.New(ctx, "nil lock")
 	}
 	deadline := time.Now().Add(l.locker.maxTryLockTimeout)
 
@@ -36,11 +40,11 @@ func (l *EtcdRWLock) upgrade(wait bool) (Lock, error) {
 	l.Lock()
 	if l.released {
 		l.Unlock()
-		return nil, errgo.New("lock already released")
+		return nil, errors.New(ctx, "lock already released")
 	}
 	if l.upgrading {
 		l.Unlock()
-		return nil, errgo.New("lock upgrade already in progress")
+		return nil, errors.New(ctx, "lock upgrade already in progress")
 	}
 	l.upgrading = true
 	locker := l.locker
@@ -58,7 +62,7 @@ func (l *EtcdRWLock) upgrade(wait bool) (Lock, error) {
 	}
 	defer func() {
 		if writeSession != nil {
-			_ = closeRWSession(writeSession)
+			_ = closeRWSessionWithCtx(ctx, writeSession)
 		}
 	}()
 
@@ -71,24 +75,30 @@ func (l *EtcdRWLock) upgrade(wait bool) (Lock, error) {
 		if err == errUpgradeReleased {
 			return nil, l.abortUpgrade(readKey, readSession, writeSession)
 		}
-		closeErr := closeRWSession(writeSession)
-		return nil, noteAcquireFailure(err, closeErr, "fail to upgrade read lock")
+		closeErr := closeRWSessionWithCtx(ctx, writeSession)
+		if closeErr != nil {
+			return nil, errors.Wrapf(ctx, err, "upgrade read lock (cleanup: %v)", closeErr)
+		}
+		return nil, errors.Wrap(ctx, err, "upgrade read lock")
 	}
 
 	if l.isReleaseRequested() {
 		return nil, l.abortUpgrade(readKey, readSession, writeSession)
 	}
 
-	releaseErr := l.releaseForUpgrade(readKey, readSession)
+	releaseErr := l.releaseForUpgrade(ctx, readKey, readSession)
 	if releaseErr != nil {
 		l.finishUpgrade()
-		closeErr := closeRWSession(writeSession)
-		return nil, noteAcquireFailure(releaseErr, closeErr, "fail to upgrade read lock")
+		closeErr := closeRWSessionWithCtx(ctx, writeSession)
+		if closeErr != nil {
+			return nil, errors.Wrapf(ctx, releaseErr, "upgrade read lock (cleanup: %v)", closeErr)
+		}
+		return nil, errors.Wrap(ctx, releaseErr, "upgrade read lock")
 	}
 
-	writeLock, err := locker.acquireWriteWithSession(resourceKey, writeSession, ttl, wait, true, deadline, nil)
+	writeLock, err := locker.acquireWriteWithSession(ctx, resourceKey, writeSession, ttl, wait, true, deadline, nil)
 	if err != nil {
-		return nil, errgo.Notef(err, "fail to upgrade read lock")
+		return nil, errors.Wrap(ctx, err, "upgrade read lock")
 	}
 	// Ownership of the session moves to the returned write lock.
 	writeSession = nil
@@ -96,12 +106,12 @@ func (l *EtcdRWLock) upgrade(wait bool) (Lock, error) {
 	return writeLock, nil
 }
 
-func (l *EtcdRWLock) releaseForUpgrade(readKey string, session *concurrency.Session) error {
+func (l *EtcdRWLock) releaseForUpgrade(ctx context.Context, readKey string, session *concurrency.Session) error {
 	l.Lock()
 	defer l.Unlock()
 
-	_, err := l.client.Delete(context.Background(), readKey)
-	closeErr := closeRWSession(session)
+	_, err := l.client.Delete(ctx, readKey)
+	closeErr := closeRWSessionWithCtx(ctx, session)
 	if err != nil {
 		return err
 	}
@@ -125,28 +135,36 @@ func (l *EtcdRWLock) finishUpgrade() {
 	l.releaseRequested = false
 }
 
-func (locker *EtcdRWLocker) acquireWriteWithSession(resourceKey string, session *concurrency.Session, ttl int, wait bool, intentCreated bool, deadline time.Time, abortRequested func() bool) (Lock, error) {
+func (locker *EtcdRWLocker) acquireWriteWithSession(ctx context.Context, resourceKey string, session *concurrency.Session, ttl int, wait bool, intentCreated bool, deadline time.Time, abortRequested func() bool) (Lock, error) {
 	// Upgrade reuses the same retry model as the normal write path:
 	// per-attempt tryLockTimeout, cooldown between retries, and a global
 	// maxTryLockTimeout for the whole wait.
 	mutex := concurrency.NewMutex(session, resourceKey)
 	tryLockErr := error(nil)
 	writeLocker := locker.writeLocker()
+	intentKey := rwWriterIntentKey(resourceKey, session.Lease())
 	for {
 		if abortRequested != nil && abortRequested() {
-			closeErr := closeRWSession(session)
-			return nil, noteAcquireFailure(errUpgradeReleased, closeErr, "upgrade cancelled by release")
+			closeErr := closeRWSessionWithCtx(ctx, session)
+			if closeErr != nil {
+				return nil, errors.Wrapf(ctx, errUpgradeReleased, "upgrade cancelled by release (cleanup: %v)", closeErr)
+			}
+			return nil, errors.Wrap(ctx, errUpgradeReleased, "upgrade cancelled by release")
 		}
 		if time.Now().After(deadline) {
-			closeErr := closeRWSession(session)
+			closeErr := closeRWSessionWithCtx(ctx, session)
 			if tryLockErr == context.DeadlineExceeded {
 				return nil, &ErrAlreadyLocked{}
 			}
-			return nil, noteAcquireFailure(errgo.Notef(tryLockErr, "fail to acquire lock"), closeErr, "fail to acquire write lock")
+			acquireErr := errors.Wrap(ctx, tryLockErr, "acquire lock")
+			if closeErr != nil {
+				return nil, errors.Wrapf(ctx, acquireErr, "acquire write lock (cleanup: %v)", closeErr)
+			}
+			return nil, errors.Wrap(ctx, acquireErr, "acquire write lock")
 		}
 
 		if !intentCreated {
-			tryLockErr = writeLocker.createWriterIntent(rwWriterIntentKey(resourceKey, session.Lease()), session.Lease())
+			tryLockErr = writeLocker.createWriterIntent(ctx, intentKey, session.Lease())
 			if tryLockErr == nil {
 				intentCreated = true
 			} else {
@@ -155,7 +173,7 @@ func (locker *EtcdRWLocker) acquireWriteWithSession(resourceKey string, session 
 			}
 		}
 
-		tryLockErr = writeLocker.tryLock(mutex)
+		tryLockErr = writeLocker.tryLock(ctx, mutex)
 		shouldWait := wait && tryLockErr == context.DeadlineExceeded
 		shouldRetry := shouldWait || (tryLockErr != nil && tryLockErr != context.DeadlineExceeded)
 		if shouldRetry {
@@ -163,24 +181,45 @@ func (locker *EtcdRWLocker) acquireWriteWithSession(resourceKey string, session 
 			continue
 		}
 		if tryLockErr == context.DeadlineExceeded {
-			closeErr := closeRWSession(session)
+			closeErr := closeRWSessionWithCtx(ctx, session)
 			if closeErr != nil {
-				return nil, noteAcquireFailure(&ErrAlreadyLocked{}, closeErr, "fail to acquire write lock")
+				return nil, errors.Wrapf(ctx, &ErrAlreadyLocked{}, "acquire write lock (cleanup: %v)", closeErr)
 			}
 			return nil, &ErrAlreadyLocked{}
 		}
 		break
 	}
 
-	lock := &EtcdLock{mutex: mutex, Mutex: &sync.Mutex{}, session: session}
-	time.AfterFunc(time.Duration(ttl)*time.Second, func() {
-		_ = lock.Release()
-	})
+	lock := &EtcdLock{
+		Mutex:   &sync.Mutex{},
+		client:  writeLocker.client,
+		mutex:   mutex,
+		session: session,
+	}
+	if intentCreated {
+		lock.intentKey = intentKey
+	}
+	err := writeLocker.waitForReaders(ctx, resourceKey, wait, deadline)
+	if err != nil {
+		releaseErr := releaseLockWithCtx(ctx, lock)
+		var alreadyLocked *ErrAlreadyLocked
+		if errors.As(err, &alreadyLocked) {
+			if releaseErr != nil {
+				return nil, errors.Wrapf(ctx, &ErrAlreadyLocked{}, "acquire write lock (cleanup: %v)", releaseErr)
+			}
+			return nil, errors.Wrap(ctx, err, "acquire write lock")
+		}
+		if releaseErr != nil {
+			return nil, errors.Wrapf(ctx, err, "acquire write lock (cleanup: %v)", releaseErr)
+		}
+		return nil, errors.Wrap(ctx, err, "acquire write lock")
+	}
+	scheduleRelease(lock, ttl)
 
 	return lock, nil
 }
 
-var errUpgradeReleased = errgo.New("lock released during upgrade")
+var errUpgradeReleased = errors.New(context.Background(), "lock released during upgrade")
 
 func (locker *EtcdRWLocker) createWriterIntentWithRetry(intentKey string, leaseID etcdv3.LeaseID, deadline time.Time, wait bool, abortRequested func() bool) error {
 	lastErr := error(nil)
@@ -195,7 +234,7 @@ func (locker *EtcdRWLocker) createWriterIntentWithRetry(intentKey string, leaseI
 			return lastErr
 		}
 
-		lastErr = locker.writeLocker().createWriterIntent(intentKey, leaseID)
+		lastErr = locker.writeLocker().createWriterIntent(context.Background(), intentKey, leaseID)
 		if lastErr == nil {
 			return nil
 		}
@@ -214,6 +253,8 @@ func (l *EtcdRWLock) isReleaseRequested() bool {
 }
 
 func (l *EtcdRWLock) abortUpgrade(readKey string, readSession *concurrency.Session, writeSession *concurrency.Session) error {
+	ctx := context.Background()
+
 	l.Lock()
 	l.released = true
 	l.upgrading = false
@@ -222,18 +263,40 @@ func (l *EtcdRWLock) abortUpgrade(readKey string, readSession *concurrency.Sessi
 	l.session = nil
 	l.Unlock()
 
-	_, err := l.client.Delete(context.Background(), readKey)
-	readCloseErr := closeRWSession(readSession)
-	writeCloseErr := closeRWSession(writeSession)
+	_, err := l.client.Delete(ctx, readKey)
+	readCloseErr := closeRWSessionWithCtx(ctx, readSession)
+	writeCloseErr := closeRWSessionWithCtx(ctx, writeSession)
 	cleanupErr := firstNonNil(readCloseErr, writeCloseErr)
 	if err != nil {
-		return noteAcquireFailure(errUpgradeReleased, err, "upgrade cancelled by release")
+		return errors.Wrap(ctx, errUpgradeReleased, err.Error())
 	}
 	if cleanupErr != nil {
-		return noteAcquireFailure(errUpgradeReleased, cleanupErr, "upgrade cancelled by release")
+		return errors.Wrapf(ctx, errUpgradeReleased, "upgrade cancelled by release (cleanup: %v)", cleanupErr)
 	}
 
 	return errUpgradeReleased
+}
+
+func closeRWSessionWithCtx(ctx context.Context, session *concurrency.Session) error {
+	if session == nil {
+		return nil
+	}
+
+	err := session.Close()
+	if err == nil || err == rpctypes.ErrLeaseNotFound {
+		return nil
+	}
+
+	return errors.Wrap(ctx, err, "close rw lock session")
+}
+
+func releaseLockWithCtx(ctx context.Context, lock Lock) error {
+	err := lock.Release()
+	if err == nil {
+		return nil
+	}
+
+	return errors.Wrap(ctx, err, "release lock")
 }
 
 func firstNonNil(errs ...error) error {
