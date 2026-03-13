@@ -2,25 +2,24 @@ package lock
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
-	"go.etcd.io/etcd/api/v3/mvccpb"
 	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	etcdv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"gopkg.in/errgo.v1"
 )
 
-// RW readers live under the same legacy queue prefix but in their own
-// subdirectory so old writers still see them as earlier queue entries.
-const rwReaderDirectory = "__rwlock-readers"
+// RW metadata must live outside the public "/etcd-lock/..." namespace so
+// internal bookkeeping never collides with user-visible legacy lock keys.
+const rwMetadataPrefix = "/go-etcd-lock-rw"
 
-// Waiting writers publish an intent key outside the legacy mutex queue so RW
-// readers can see pending writers without changing the legacy lock ordering.
-const rwWriterIntentDirectory = "__rwlock-writer-intents"
+const rwReaderDirectory = "readers"
+
+const rwWriterIntentDirectory = "writer-intents"
 
 type RWLocker interface {
 	AcquireRead(key string, ttl int) (Lock, error)
@@ -123,9 +122,9 @@ func (locker *EtcdRWLocker) acquireRead(key string, ttl int, wait bool) (Lock, e
 		}
 
 		// A reader may proceed alongside other readers, but it must not bypass any
-		// earlier legacy writer or RW writer already queued on the same lock key.
-		// If such a writer exists, the reader drops its provisional queue entry and
-		// retries later so it cannot trap a retrying legacy waiter behind itself.
+		// earlier legacy writer or RW writer already queued or announced for the
+		// same lock key. If such a writer exists, the reader drops its provisional
+		// entry and retries later.
 		writerAhead, err := locker.hasEarlierWriter(resourceKey, myRev-1)
 		if err != nil {
 			releaseErr := lock.Release()
@@ -147,8 +146,8 @@ func (locker *EtcdRWLocker) acquireRead(key string, ttl int, wait bool) (Lock, e
 }
 
 func (locker *EtcdRWLocker) writeLocker() *EtcdLocker {
-	// RW writes intentionally reuse the legacy lock path so old and new writers
-	// compete on exactly the same etcd entries during rollout.
+	// RW writes intentionally reuse the legacy writer path so old and new writers
+	// keep the same writer-vs-writer ordering during rollout.
 	return &EtcdLocker{
 		client:                  locker.client,
 		tryLockTimeout:          locker.tryLockTimeout,
@@ -188,7 +187,7 @@ func (locker *EtcdRWLocker) hasEarlierWriter(resourceKey string, maxCreateRev in
 		return true, nil
 	}
 
-	return queueContainsWriter(resourceKey, resp.Kvs), nil
+	return len(resp.Kvs) > 0, nil
 }
 
 func (locker *EtcdRWLocker) hasAnyWriter(resourceKey string) (bool, error) {
@@ -200,7 +199,7 @@ func (locker *EtcdRWLocker) hasAnyWriter(resourceKey string) (bool, error) {
 		return true, nil
 	}
 
-	return queueContainsWriter(resourceKey, resp.Kvs), nil
+	return len(resp.Kvs) > 0, nil
 }
 
 func (locker *EtcdRWLocker) writerState(resourceKey string, opts ...etcdv3.OpOption) (*etcdv3.GetResponse, *etcdv3.GetResponse, error) {
@@ -227,6 +226,18 @@ func (locker *EtcdRWLocker) writerState(resourceKey string, opts ...etcdv3.OpOpt
 	}
 
 	return intentResp, resp, nil
+}
+
+func (locker *EtcdLocker) hasAnyReader(resourceKey string) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), locker.tryLockTimeout)
+	defer cancel()
+
+	resp, err := locker.client.Get(ctx, rwReadersPrefix(resourceKey), etcdv3.WithPrefix(), etcdv3.WithLimit(1))
+	if err != nil {
+		return false, err
+	}
+
+	return len(resp.Kvs) > 0, nil
 }
 
 func (locker *EtcdRWLocker) scheduleRelease(lock *EtcdRWLock, ttl int) {
@@ -275,7 +286,7 @@ func rwQueuePrefix(resourceKey string) string {
 }
 
 func rwReadersPrefix(resourceKey string) string {
-	return fmt.Sprintf("%s%s/", rwQueuePrefix(resourceKey), rwReaderDirectory)
+	return fmt.Sprintf("%s/%s/%s/", rwMetadataPrefix, rwReaderDirectory, encodeMetadataResource(resourceKey))
 }
 
 func rwReaderKey(resourceKey string, leaseID etcdv3.LeaseID) string {
@@ -283,7 +294,7 @@ func rwReaderKey(resourceKey string, leaseID etcdv3.LeaseID) string {
 }
 
 func rwWriterIntentsPrefix(resourceKey string) string {
-	return fmt.Sprintf("%s.%s/", resourceKey, rwWriterIntentDirectory)
+	return fmt.Sprintf("%s/%s/%s/", rwMetadataPrefix, rwWriterIntentDirectory, encodeMetadataResource(resourceKey))
 }
 
 func rwWriterIntentKey(resourceKey string, leaseID etcdv3.LeaseID) string {
@@ -298,14 +309,6 @@ func noteAcquireFailure(err error, cleanupErr error, message string) error {
 	return errgo.Notef(err, "%s (additionally failed cleanup: %v)", message, cleanupErr)
 }
 
-func queueContainsWriter(resourceKey string, kvs []*mvccpb.KeyValue) bool {
-	readerPrefix := rwReadersPrefix(resourceKey)
-	// Anything in the shared queue that is not under the reader subtree is a
-	// writer entry, either from the legacy locker or from RW AcquireWrite.
-	for _, kv := range kvs {
-		if !strings.HasPrefix(string(kv.Key), readerPrefix) {
-			return true
-		}
-	}
-	return false
+func encodeMetadataResource(resourceKey string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(resourceKey))
 }

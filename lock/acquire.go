@@ -76,8 +76,10 @@ type Lock interface {
 type EtcdLock struct {
 	*sync.Mutex
 
-	mutex   *concurrency.Mutex
-	session *concurrency.Session
+	client    *etcdv3.Client
+	mutex     *concurrency.Mutex
+	session   *concurrency.Session
+	intentKey string
 }
 
 func (locker *EtcdLocker) Acquire(key string, ttl int) (Lock, error) {
@@ -101,9 +103,11 @@ func (locker *EtcdLocker) acquire(key string, ttl int, wait bool) (Lock, error) 
 
 	timeout := time.NewTimer(locker.maxTryLockTimeout)
 	defer timeout.Stop()
+	deadline := time.Now().Add(locker.maxTryLockTimeout)
 
 	var tryLockErr error
 	intentCreated := !wait
+	intentKey := rwWriterIntentKey(key, session.Lease())
 	for {
 		// If we've wait more than the maxTryLockTimeout, we stop waiting and
 		// consider the lock already taken.
@@ -118,7 +122,7 @@ func (locker *EtcdLocker) acquire(key string, ttl int, wait bool) (Lock, error) 
 		}
 
 		if !intentCreated {
-			tryLockErr = locker.createWriterIntent(rwWriterIntentKey(key, session.Lease()), session.Lease())
+			tryLockErr = locker.createWriterIntent(intentKey, session.Lease())
 			if tryLockErr == nil {
 				intentCreated = true
 			} else {
@@ -146,7 +150,19 @@ func (locker *EtcdLocker) acquire(key string, ttl int, wait bool) (Lock, error) 
 		}
 	}
 
-	lock := &EtcdLock{mutex: mutex, Mutex: &sync.Mutex{}, session: session}
+	lock := &EtcdLock{
+		Mutex:   &sync.Mutex{},
+		client:  locker.client,
+		mutex:   mutex,
+		session: session,
+	}
+	if intentCreated {
+		lock.intentKey = intentKey
+	}
+	err = locker.waitForReaders(key, wait, deadline, lock)
+	if err != nil {
+		return nil, err
+	}
 
 	go func() {
 		time.AfterFunc(time.Duration(ttl)*time.Second, func() {
@@ -161,6 +177,27 @@ func (locker *EtcdLocker) tryLock(mutex *concurrency.Mutex) error {
 	ctx, cancel := context.WithTimeout(context.Background(), locker.tryLockTimeout)
 	defer cancel()
 	return mutex.Lock(ctx)
+}
+
+func (locker *EtcdLocker) waitForReaders(resourceKey string, wait bool, deadline time.Time, lock *EtcdLock) error {
+	for {
+		readersPresent, err := locker.hasAnyReader(resourceKey)
+		if err != nil {
+			releaseErr := lock.Release()
+			return noteAcquireFailure(err, releaseErr, "fail to acquire lock")
+		}
+		if !readersPresent {
+			return nil
+		}
+		if !wait || time.Now().After(deadline) {
+			releaseErr := lock.Release()
+			if releaseErr != nil {
+				return noteAcquireFailure(&ErrAlreadyLocked{}, releaseErr, "fail to acquire lock")
+			}
+			return &ErrAlreadyLocked{}
+		}
+		time.Sleep(locker.cooldownTryLockDuration)
+	}
 }
 
 func (locker *EtcdLocker) createWriterIntent(intentKey string, leaseID etcdv3.LeaseID) error {

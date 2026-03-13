@@ -13,6 +13,13 @@ func (l *EtcdLock) Release() error {
 	l.Lock()
 	defer l.Unlock()
 
-	defer l.session.Close()
-	return l.mutex.Unlock(context.Background())
+	unlockErr := l.mutex.Unlock(context.Background())
+	if l.intentKey != "" {
+		_, err := l.client.Delete(context.Background(), l.intentKey)
+		if unlockErr == nil && err != nil {
+			unlockErr = err
+		}
+	}
+	_ = l.session.Close()
+	return unlockErr
 }
