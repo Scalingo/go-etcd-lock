@@ -77,7 +77,11 @@ func NewEtcdRWLocker(client *etcdv3.Client, opts ...EtcdLockerOpt) RWLocker {
 	}
 
 	return &EtcdRWLocker{
-		writer: writer,
+		writer:                  writer,
+		client:                  client,
+		tryLockTimeout:          writer.tryLockTimeout,
+		maxTryLockTimeout:       writer.maxTryLockTimeout,
+		cooldownTryLockDuration: writer.cooldownTryLockDuration,
 	}
 }
 
@@ -192,7 +196,7 @@ func (locker *EtcdRWLocker) createReaderKey(ctx context.Context, lockKey string,
 	ctx, cancel := context.WithTimeout(ctx, locker.writer.tryLockTimeout)
 	defer cancel()
 
-	resp, err := locker.writer.etcdClient().client.Txn(ctx).
+	resp, err := locker.etcdClient().Txn(ctx).
 		If(etcdv3.Compare(etcdv3.CreateRevision(lockKey), "=", 0)).
 		Then(etcdv3.OpPut(lockKey, "", etcdv3.WithLease(leaseID))).
 		Commit()
@@ -239,7 +243,7 @@ func (locker *EtcdRWLocker) writerState(resourceKey string, opts ...etcdv3.OpOpt
 	defer cancel()
 
 	queueOpts := append([]etcdv3.OpOption{etcdv3.WithPrefix()}, opts...)
-	resp, err := locker.writer.etcdClient().Get(
+	resp, err := locker.etcdClient().Get(
 		ctx,
 		rwQueuePrefix(resourceKey),
 		queueOpts...,
@@ -248,7 +252,7 @@ func (locker *EtcdRWLocker) writerState(resourceKey string, opts ...etcdv3.OpOpt
 		return nil, nil, errors.Wrap(context.Background(), err, "list queued writers")
 	}
 	intentOpts := append([]etcdv3.OpOption{etcdv3.WithPrefix(), etcdv3.WithLimit(1)}, opts...)
-	intentResp, err := locker.writer.etcdClient().Get(
+	intentResp, err := locker.etcdClient().Get(
 		ctx,
 		rwWriterIntentsPrefix(resourceKey),
 		intentOpts...,
