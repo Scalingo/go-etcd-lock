@@ -37,6 +37,15 @@ type RWLocker interface {
 
 type EtcdRWLocker struct {
 	writer *EtcdLocker
+	// clientMu protects temporary client swapping used by upgrade tests.
+	clientMu sync.RWMutex
+	client   *etcdv3.Client
+	// tryLockTimeout is the timeout duration for one attempt to create the lock.
+	tryLockTimeout time.Duration
+	// maxTryLockTimeout is the maximal time the wait variants can block.
+	maxTryLockTimeout time.Duration
+	// cooldownTryLockDuration is the pause between retries while waiting.
+	cooldownTryLockDuration time.Duration
 }
 
 type EtcdRWLock struct {
@@ -211,11 +220,22 @@ func (locker *EtcdRWLocker) acquireRead(ctx context.Context, key string, ttl int
 	}
 }
 
+func (locker *EtcdRWLocker) writeLocker() *EtcdLocker {
+	// RW writes intentionally reuse the legacy writer path so old and new writers
+	// keep the same writer-vs-writer ordering during rollout.
+	return &EtcdLocker{
+		client:                  locker.etcdClient(),
+		tryLockTimeout:          locker.tryLockTimeout,
+		maxTryLockTimeout:       locker.maxTryLockTimeout,
+		cooldownTryLockDuration: locker.cooldownTryLockDuration,
+	}
+}
+
 func (locker *EtcdRWLocker) createReaderKey(ctx context.Context, lockKey string, leaseID etcdv3.LeaseID) (int64, error) {
 	ctx, cancel := context.WithTimeout(ctx, locker.writer.tryLockTimeout)
 	defer cancel()
 
-	resp, err := locker.writer.client.Txn(ctx).
+	resp, err := locker.writer.etcdClient().client.Txn(ctx).
 		If(etcdv3.Compare(etcdv3.CreateRevision(lockKey), "=", 0)).
 		Then(etcdv3.OpPut(lockKey, "", etcdv3.WithLease(leaseID))).
 		Commit()
@@ -262,7 +282,7 @@ func (locker *EtcdRWLocker) writerState(ctx context.Context, resourceKey string,
 	defer cancel()
 
 	queueOpts := append([]etcdv3.OpOption{etcdv3.WithPrefix()}, opts...)
-	resp, err := locker.writer.client.Get(
+	resp, err := locker.writer.etcdClient().Get(
 		ctx,
 		rwQueuePrefix(resourceKey),
 		queueOpts...,
@@ -271,7 +291,7 @@ func (locker *EtcdRWLocker) writerState(ctx context.Context, resourceKey string,
 		return nil, nil, errors.Wrap(ctx, err, "list queued writers")
 	}
 	intentOpts := append([]etcdv3.OpOption{etcdv3.WithPrefix(), etcdv3.WithLimit(1)}, opts...)
-	intentResp, err := locker.writer.client.Get(
+	intentResp, err := locker.writer.etcdClient().Get(
 		ctx,
 		rwWriterIntentsPrefix(resourceKey),
 		intentOpts...,
@@ -385,4 +405,18 @@ func rwMetadataResourcePrefix(resourceKey string, kind string) string {
 	// in a single opaque path segment, so prefix scans stay scoped to one lock.
 	// Example: "/etcd-lock/my-lock" becomes one "<encoded-resource>" segment.
 	return fmt.Sprintf("%s/%s/%s/", rwMetadataPrefix, kind, base64.RawURLEncoding.EncodeToString([]byte(resourceKey)))
+}
+
+func (locker *EtcdRWLocker) etcdClient() *etcdv3.Client {
+	locker.clientMu.RLock()
+	defer locker.clientMu.RUnlock()
+
+	return locker.client
+}
+
+func (locker *EtcdRWLocker) setEtcdClient(client *etcdv3.Client) {
+	locker.clientMu.Lock()
+	defer locker.clientMu.Unlock()
+
+	locker.client = client
 }
