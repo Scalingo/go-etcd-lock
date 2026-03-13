@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	etcdv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"gopkg.in/errgo.v1"
 )
@@ -28,6 +29,7 @@ func (l *EtcdRWLock) upgrade(wait bool) (Lock, error) {
 	if l == nil {
 		return nil, errgo.New("nil lock")
 	}
+	deadline := time.Now().Add(l.locker.maxTryLockTimeout)
 
 	// Upgrade is deliberately non-atomic: we first mark the intent to write,
 	// then release the read entry, then compete for the legacy write lock.
@@ -54,16 +56,27 @@ func (l *EtcdRWLock) upgrade(wait bool) (Lock, error) {
 		l.finishUpgrade()
 		return nil, err
 	}
+	defer func() {
+		if writeSession != nil {
+			_ = closeRWSession(writeSession)
+		}
+	}()
 
-	writeLocker := locker.writeLocker()
 	intentKey := rwWriterIntentKey(resourceKey, writeSession.Lease())
 	// Publishing writer intent before dropping the read lock prevents later
 	// readers from slipping in during the upgrade window.
-	err = writeLocker.createWriterIntent(intentKey, writeSession.Lease())
+	err = locker.createWriterIntentWithRetry(intentKey, writeSession.Lease(), deadline, wait, l.isReleaseRequested)
 	if err != nil {
 		l.finishUpgrade()
+		if err == errUpgradeReleased {
+			return nil, l.abortUpgrade(readKey, readSession, writeSession)
+		}
 		closeErr := closeRWSession(writeSession)
 		return nil, noteAcquireFailure(err, closeErr, "fail to upgrade read lock")
+	}
+
+	if l.isReleaseRequested() {
+		return nil, l.abortUpgrade(readKey, readSession, writeSession)
 	}
 
 	releaseErr := l.releaseForUpgrade(readKey, readSession)
@@ -73,10 +86,12 @@ func (l *EtcdRWLock) upgrade(wait bool) (Lock, error) {
 		return nil, noteAcquireFailure(releaseErr, closeErr, "fail to upgrade read lock")
 	}
 
-	writeLock, err := locker.acquireWriteWithSession(resourceKey, writeSession, ttl, wait, true)
+	writeLock, err := locker.acquireWriteWithSession(resourceKey, writeSession, ttl, wait, true, deadline, nil)
 	if err != nil {
 		return nil, errgo.Notef(err, "fail to upgrade read lock")
 	}
+	// Ownership of the session moves to the returned write lock.
+	writeSession = nil
 
 	return writeLock, nil
 }
@@ -107,27 +122,27 @@ func (l *EtcdRWLock) finishUpgrade() {
 	defer l.Unlock()
 
 	l.upgrading = false
+	l.releaseRequested = false
 }
 
-func (locker *EtcdRWLocker) acquireWriteWithSession(resourceKey string, session *concurrency.Session, ttl int, wait bool, intentCreated bool) (Lock, error) {
-	mutex := concurrency.NewMutex(session, resourceKey)
-	timeout := time.NewTimer(locker.maxTryLockTimeout)
-	defer timeout.Stop()
-
+func (locker *EtcdRWLocker) acquireWriteWithSession(resourceKey string, session *concurrency.Session, ttl int, wait bool, intentCreated bool, deadline time.Time, abortRequested func() bool) (Lock, error) {
 	// Upgrade reuses the same retry model as the normal write path:
 	// per-attempt tryLockTimeout, cooldown between retries, and a global
 	// maxTryLockTimeout for the whole wait.
+	mutex := concurrency.NewMutex(session, resourceKey)
 	tryLockErr := error(nil)
 	writeLocker := locker.writeLocker()
 	for {
-		select {
-		case <-timeout.C:
+		if abortRequested != nil && abortRequested() {
+			closeErr := closeRWSession(session)
+			return nil, noteAcquireFailure(errUpgradeReleased, closeErr, "upgrade cancelled by release")
+		}
+		if time.Now().After(deadline) {
 			closeErr := closeRWSession(session)
 			if tryLockErr == context.DeadlineExceeded {
 				return nil, &ErrAlreadyLocked{}
 			}
 			return nil, noteAcquireFailure(errgo.Notef(tryLockErr, "fail to acquire lock"), closeErr, "fail to acquire write lock")
-		default:
 		}
 
 		if !intentCreated {
@@ -163,4 +178,69 @@ func (locker *EtcdRWLocker) acquireWriteWithSession(resourceKey string, session 
 	})
 
 	return lock, nil
+}
+
+var errUpgradeReleased = errgo.New("lock released during upgrade")
+
+func (locker *EtcdRWLocker) createWriterIntentWithRetry(intentKey string, leaseID etcdv3.LeaseID, deadline time.Time, wait bool, abortRequested func() bool) error {
+	lastErr := error(nil)
+	for {
+		if abortRequested != nil && abortRequested() {
+			return errUpgradeReleased
+		}
+		if time.Now().After(deadline) {
+			if lastErr == nil {
+				return context.DeadlineExceeded
+			}
+			return lastErr
+		}
+
+		lastErr = locker.writeLocker().createWriterIntent(intentKey, leaseID)
+		if lastErr == nil {
+			return nil
+		}
+		if !wait {
+			return lastErr
+		}
+		time.Sleep(locker.cooldownTryLockDuration)
+	}
+}
+
+func (l *EtcdRWLock) isReleaseRequested() bool {
+	l.Lock()
+	defer l.Unlock()
+
+	return l.releaseRequested
+}
+
+func (l *EtcdRWLock) abortUpgrade(readKey string, readSession *concurrency.Session, writeSession *concurrency.Session) error {
+	l.Lock()
+	l.released = true
+	l.upgrading = false
+	l.releaseRequested = false
+	l.lockKey = ""
+	l.session = nil
+	l.Unlock()
+
+	_, err := l.client.Delete(context.Background(), readKey)
+	readCloseErr := closeRWSession(readSession)
+	writeCloseErr := closeRWSession(writeSession)
+	cleanupErr := firstNonNil(readCloseErr, writeCloseErr)
+	if err != nil {
+		return noteAcquireFailure(errUpgradeReleased, err, "upgrade cancelled by release")
+	}
+	if cleanupErr != nil {
+		return noteAcquireFailure(errUpgradeReleased, cleanupErr, "upgrade cancelled by release")
+	}
+
+	return errUpgradeReleased
+}
+
+func firstNonNil(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
