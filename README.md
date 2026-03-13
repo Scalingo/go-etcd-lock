@@ -37,7 +37,33 @@ if err != nil {
 
 Use `NewEtcdRWLocker` when you want shared readers and exclusive writers without changing the existing lock behavior. RW readers participate in the same etcd queue prefix as legacy write locks, so legacy locks and RW locks honor each other during a rollout.
 
-During a migration, you can safely run both implementations against the same lock key. Existing `EtcdLocker` locks remain write locks, `EtcdRWLocker.AcquireWrite` uses the same write-lock mechanism, and `EtcdRWLocker.AcquireRead` joins the same etcd queue with reader-specific entries. That means legacy writers wait for active RW readers, and new RW readers will not bypass older legacy writers already queued on the lock.
+During a migration from `go-etcd-lock` `v5.0.9` to `v6.*` you can safely run both implementations against the same lock key. Existing `EtcdLocker` locks remain write locks, `EtcdRWLocker.AcquireWrite` uses the same write-lock mechanism, and `EtcdRWLocker.AcquireRead` joins the same etcd queue with reader-specific entries. That means legacy writers wait for active RW readers, and new RW readers will not bypass older legacy writers already queued on the lock.
+
+```mermaid
+sequenceDiagram
+    participant R1 as RW reader #1
+    participant E as etcd shared queue
+    participant W1 as legacy writer
+    participant R2 as later RW reader
+
+    R1->>E: add reader entry
+    Note over R1,E: reader is active
+
+    W1->>E: add writer waiter / intent
+    Note over W1,E: writer is queued behind active reader
+
+    R2->>E: check queue for earlier writers
+    E-->>R2: writer already queued
+    Note over R2,E: R2 waits instead of bypassing W1
+
+    R1->>E: release reader entry
+    E-->>W1: writer reaches front of queue
+    Note over W1,E: writer acquires lock
+
+    W1->>E: release writer lock
+    E-->>R2: no earlier writer remains
+    Note over R2,E: reader can now enter
+```
 
 ```go
 locker := lock.NewEtcdRWLocker(client)
