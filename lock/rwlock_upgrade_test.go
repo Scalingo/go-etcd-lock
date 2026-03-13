@@ -92,15 +92,15 @@ func TestRWLockUpgrade(t *testing.T) {
 			WithCooldownTryLockDuration(50*time.Millisecond),
 			WithMaxTryLockTimeout(2*time.Second),
 		))
-		liveClient := locker.client
+		liveClient := locker.etcdClient()
 		readLock, err := locker.AcquireRead("/rw-upgrade-intent-retry", 3)
 		require.NoError(t, err)
 		rwReadLock := mustRWReadLock(t, readLock)
 
 		brokenClient := newBrokenEtcdClient(t)
-		locker.client = brokenClient
+		locker.setEtcdClient(brokenClient)
 		t.Cleanup(func() {
-			locker.client = liveClient
+			locker.setEtcdClient(liveClient)
 			require.NoError(t, brokenClient.Close())
 		})
 
@@ -115,7 +115,7 @@ func TestRWLockUpgrade(t *testing.T) {
 
 		waitUntilUpgradeInProgress(t, rwReadLock)
 		time.Sleep(200 * time.Millisecond)
-		locker.client = liveClient
+		locker.setEtcdClient(liveClient)
 
 		require.NoError(t, <-writeErr)
 		writeLock := <-writeReady
@@ -132,15 +132,15 @@ func TestRWLockUpgrade(t *testing.T) {
 			WithCooldownTryLockDuration(50*time.Millisecond),
 			WithMaxTryLockTimeout(2*time.Second),
 		))
-		liveClient := locker.client
+		liveClient := locker.etcdClient()
 		readLock, err := locker.AcquireRead("/rw-upgrade-release-cancels", 3)
 		require.NoError(t, err)
 		rwReadLock := mustRWReadLock(t, readLock)
 
 		brokenClient := newBrokenEtcdClient(t)
-		locker.client = brokenClient
+		locker.setEtcdClient(brokenClient)
 		t.Cleanup(func() {
-			locker.client = liveClient
+			locker.setEtcdClient(liveClient)
 			require.NoError(t, brokenClient.Close())
 		})
 
@@ -158,7 +158,7 @@ func TestRWLockUpgrade(t *testing.T) {
 		require.Error(t, err)
 		require.ErrorContains(t, err, "lock released during upgrade")
 
-		locker.client = liveClient
+		locker.setEtcdClient(liveClient)
 		writeLock, err := locker.AcquireWrite("/rw-upgrade-release-cancels", 3)
 		require.NoError(t, err)
 		require.NotNil(t, writeLock)
