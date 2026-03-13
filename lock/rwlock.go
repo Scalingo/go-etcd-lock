@@ -37,10 +37,21 @@ type EtcdRWLocker struct {
 type EtcdRWLock struct {
 	*sync.Mutex
 
-	client   *etcdv3.Client
-	session  *concurrency.Session
-	lockKey  string
+	client *etcdv3.Client
+	// locker carries the RW timing configuration used for upgrade attempts.
+	locker *EtcdRWLocker
+	// resourceKey is the shared etcd lock namespace for this protected resource.
+	resourceKey string
+	// lockKey is the current reader entry stored in etcd for this lock instance.
+	lockKey string
+	// ttl is reused if the read lock is upgraded into a write lock.
+	ttl int
+	// session owns the current etcd lease backing the reader entry.
+	session *concurrency.Session
+	// released avoids duplicate cleanup from explicit release and TTL expiry.
 	released bool
+	// upgrading suppresses normal release while the read lock is being converted.
+	upgrading bool
 }
 
 func NewEtcdRWLocker(client *etcdv3.Client, opts ...EtcdLockerOpt) RWLocker {
@@ -111,10 +122,13 @@ func (locker *EtcdRWLocker) acquireRead(key string, ttl int, wait bool) (Lock, e
 		}
 
 		lock := &EtcdRWLock{
-			Mutex:   &sync.Mutex{},
-			client:  locker.writer.client,
-			session: session,
-			lockKey: rwReaderKey(resourceKey, session.Lease()),
+			Mutex:       &sync.Mutex{},
+			client:      locker.writer.client,
+			locker:      locker,
+			resourceKey: resourceKey,
+			ttl:         ttl,
+			session:     session,
+			lockKey:     rwReaderKey(resourceKey, session.Lease()),
 		}
 		myRev, err := locker.createReaderKey(ctx, lock.lockKey, session.Lease())
 		if err != nil {
@@ -250,6 +264,9 @@ func (l *EtcdRWLock) Release() error {
 	defer l.Unlock()
 
 	if l.released {
+		return nil
+	}
+	if l.upgrading {
 		return nil
 	}
 
