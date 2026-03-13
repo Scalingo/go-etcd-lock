@@ -132,6 +132,7 @@ func (locker *EtcdRWLocker) acquireWriteWithSession(resourceKey string, session 
 	mutex := concurrency.NewMutex(session, resourceKey)
 	tryLockErr := error(nil)
 	writeLocker := locker.writeLocker()
+	intentKey := rwWriterIntentKey(resourceKey, session.Lease())
 	for {
 		if abortRequested != nil && abortRequested() {
 			closeErr := closeRWSession(session)
@@ -146,7 +147,7 @@ func (locker *EtcdRWLocker) acquireWriteWithSession(resourceKey string, session 
 		}
 
 		if !intentCreated {
-			tryLockErr = writeLocker.createWriterIntent(rwWriterIntentKey(resourceKey, session.Lease()), session.Lease())
+			tryLockErr = writeLocker.createWriterIntent(intentKey, session.Lease())
 			if tryLockErr == nil {
 				intentCreated = true
 			} else {
@@ -172,7 +173,19 @@ func (locker *EtcdRWLocker) acquireWriteWithSession(resourceKey string, session 
 		break
 	}
 
-	lock := &EtcdLock{mutex: mutex, Mutex: &sync.Mutex{}, session: session}
+	lock := &EtcdLock{
+		Mutex:   &sync.Mutex{},
+		client:  writeLocker.client,
+		mutex:   mutex,
+		session: session,
+	}
+	if intentCreated {
+		lock.intentKey = intentKey
+	}
+	err := writeLocker.waitForReaders(resourceKey, wait, deadline, lock)
+	if err != nil {
+		return nil, err
+	}
 	time.AfterFunc(time.Duration(ttl)*time.Second, func() {
 		_ = lock.Release()
 	})
