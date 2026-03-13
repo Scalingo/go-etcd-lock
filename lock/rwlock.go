@@ -30,7 +30,9 @@ type RWLocker interface {
 }
 
 type EtcdRWLocker struct {
-	client *etcdv3.Client
+	// clientMu protects temporary client swapping used by upgrade tests.
+	clientMu sync.RWMutex
+	client   *etcdv3.Client
 	// tryLockTimeout is the timeout duration for one attempt to create the lock.
 	tryLockTimeout time.Duration
 	// maxTryLockTimeout is the maximal time the wait variants can block.
@@ -42,10 +44,23 @@ type EtcdRWLocker struct {
 type EtcdRWLock struct {
 	*sync.Mutex
 
-	client   *etcdv3.Client
-	session  *concurrency.Session
-	lockKey  string
+	client *etcdv3.Client
+	// locker carries the RW timing configuration used for upgrade attempts.
+	locker *EtcdRWLocker
+	// resourceKey is the shared etcd lock namespace for this protected resource.
+	resourceKey string
+	// lockKey is the current reader entry stored in etcd for this lock instance.
+	lockKey string
+	// ttl is reused if the read lock is upgraded into a write lock.
+	ttl int
+	// session owns the current etcd lease backing the reader entry.
+	session *concurrency.Session
+	// released avoids duplicate cleanup from explicit release and TTL expiry.
 	released bool
+	// upgrading suppresses normal release while the read lock is being converted.
+	upgrading bool
+	// releaseRequested records a release that arrived while upgrade was in flight.
+	releaseRequested bool
 }
 
 func NewEtcdRWLocker(client *etcdv3.Client, opts ...EtcdLockerOpt) RWLocker {
@@ -104,16 +119,20 @@ func (locker *EtcdRWLocker) acquireRead(key string, ttl int, wait bool) (Lock, e
 			continue
 		}
 
-		session, err := concurrency.NewSession(locker.client, concurrency.WithTTL(ttl))
+		client := locker.etcdClient()
+		session, err := concurrency.NewSession(client, concurrency.WithTTL(ttl))
 		if err != nil {
 			return nil, err
 		}
 
 		lock := &EtcdRWLock{
-			Mutex:   &sync.Mutex{},
-			client:  locker.client,
-			session: session,
-			lockKey: rwReaderKey(resourceKey, session.Lease()),
+			Mutex:       &sync.Mutex{},
+			client:      client,
+			locker:      locker,
+			resourceKey: resourceKey,
+			ttl:         ttl,
+			session:     session,
+			lockKey:     rwReaderKey(resourceKey, session.Lease()),
 		}
 		myRev, err := locker.createReaderKey(lock.lockKey, session.Lease())
 		if err != nil {
@@ -149,7 +168,7 @@ func (locker *EtcdRWLocker) writeLocker() *EtcdLocker {
 	// RW writes intentionally reuse the legacy writer path so old and new writers
 	// keep the same writer-vs-writer ordering during rollout.
 	return &EtcdLocker{
-		client:                  locker.client,
+		client:                  locker.etcdClient(),
 		tryLockTimeout:          locker.tryLockTimeout,
 		maxTryLockTimeout:       locker.maxTryLockTimeout,
 		cooldownTryLockDuration: locker.cooldownTryLockDuration,
@@ -160,7 +179,7 @@ func (locker *EtcdRWLocker) createReaderKey(lockKey string, leaseID etcdv3.Lease
 	ctx, cancel := context.WithTimeout(context.Background(), locker.tryLockTimeout)
 	defer cancel()
 
-	resp, err := locker.client.Txn(ctx).
+	resp, err := locker.etcdClient().Txn(ctx).
 		If(etcdv3.Compare(etcdv3.CreateRevision(lockKey), "=", 0)).
 		Then(etcdv3.OpPut(lockKey, "", etcdv3.WithLease(leaseID))).
 		Commit()
@@ -207,7 +226,7 @@ func (locker *EtcdRWLocker) writerState(resourceKey string, opts ...etcdv3.OpOpt
 	defer cancel()
 
 	queueOpts := append([]etcdv3.OpOption{etcdv3.WithPrefix()}, opts...)
-	resp, err := locker.client.Get(
+	resp, err := locker.etcdClient().Get(
 		ctx,
 		rwQueuePrefix(resourceKey),
 		queueOpts...,
@@ -216,7 +235,7 @@ func (locker *EtcdRWLocker) writerState(resourceKey string, opts ...etcdv3.OpOpt
 		return nil, nil, err
 	}
 	intentOpts := append([]etcdv3.OpOption{etcdv3.WithPrefix(), etcdv3.WithLimit(1)}, opts...)
-	intentResp, err := locker.client.Get(
+	intentResp, err := locker.etcdClient().Get(
 		ctx,
 		rwWriterIntentsPrefix(resourceKey),
 		intentOpts...,
@@ -255,6 +274,10 @@ func (l *EtcdRWLock) Release() error {
 	defer l.Unlock()
 
 	if l.released {
+		return nil
+	}
+	if l.upgrading {
+		l.releaseRequested = true
 		return nil
 	}
 
@@ -311,4 +334,18 @@ func noteAcquireFailure(err error, cleanupErr error, message string) error {
 
 func encodeMetadataResource(resourceKey string) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(resourceKey))
+}
+
+func (locker *EtcdRWLocker) etcdClient() *etcdv3.Client {
+	locker.clientMu.RLock()
+	defer locker.clientMu.RUnlock()
+
+	return locker.client
+}
+
+func (locker *EtcdRWLocker) setEtcdClient(client *etcdv3.Client) {
+	locker.clientMu.Lock()
+	defer locker.clientMu.Unlock()
+
+	locker.client = client
 }
