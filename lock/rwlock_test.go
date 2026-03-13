@@ -255,6 +255,70 @@ func TestRWLockMigration(t *testing.T) {
 	})
 }
 
+func TestRWLockKeyspaceIsolation(t *testing.T) {
+	// These regressions are easy to miss because they depend on specific user
+	// lock names. The rule is simple: internal RW metadata paths must never
+	// change the behavior of unrelated user-visible legacy lock keys.
+
+	t.Run("writer intents stay internal", func(t *testing.T) {
+		legacyLocker := testLegacyLocker()
+
+		// This uses WaitAcquire on purpose. The new implementation creates a
+		// writer-intent key for waiting writers under:
+		//
+		//   <resource>.__rwlock-writer-intents/<lease>
+		//
+		// That path must stay internal. Before the RW changes, a caller was free
+		// to use "/rw-keyspace-intent.__rwlock-writer-intents" as a normal,
+		// unrelated legacy lock key. If those two keys now contend with each other,
+		// the rollout is no longer legacy-compatible.
+		waitingWriter, err := legacyLocker.WaitAcquire("/rw-keyspace-intent", 3)
+		require.NoError(t, err)
+		require.NotNil(t, waitingWriter)
+		t.Cleanup(func() {
+			require.NoError(t, waitingWriter.Release())
+		})
+
+		// This second key is a legitimate user key from the legacy API point of
+		// view. It only happens to match the suffix chosen internally by the RW
+		// implementation. The two acquisitions must remain independent.
+		independentLock, err := legacyLocker.Acquire("/rw-keyspace-intent.__rwlock-writer-intents", 3)
+		require.NoError(t, err)
+		require.NotNil(t, independentLock)
+		require.NoError(t, independentLock.Release())
+	})
+
+	t.Run("reader entries stay internal", func(t *testing.T) {
+		rwLocker := testRWLocker()
+		legacyLocker := testLegacyLocker()
+
+		// RW readers are currently stored under:
+		//
+		//   <resource>/__rwlock-readers/<lease>
+		//
+		// That means a plain legacy caller can accidentally pick a user-visible
+		// lock key that overlaps with the RW reader subtree:
+		//
+		//   "/rw-keyspace-readers/__rwlock-readers"
+		//
+		// Legacy behavior should treat these as unrelated keys.
+		readLock, err := rwLocker.AcquireRead("/rw-keyspace-readers", 3)
+		require.NoError(t, err)
+		require.NotNil(t, readLock)
+		t.Cleanup(func() {
+			require.NoError(t, readLock.Release())
+		})
+
+		// If this acquisition is blocked by the active reader above, the RW
+		// metadata leaked into the public lock namespace and changed the legacy
+		// keyspace semantics.
+		independentLock, err := legacyLocker.Acquire("/rw-keyspace-readers/__rwlock-readers", 3)
+		require.NoError(t, err)
+		require.NotNil(t, independentLock)
+		require.NoError(t, independentLock.Release())
+	})
+}
+
 func TestRWLockWait(t *testing.T) {
 	locker := testRWLocker()
 
