@@ -35,9 +35,9 @@ if err != nil {
 
 ## Reader / Writer Lock
 
-Use `NewEtcdRWLocker` when you want shared readers and exclusive writers without changing the existing lock behavior. RW readers participate in the same etcd queue prefix as legacy write locks, so legacy locks and RW locks honor each other during a rollout.
+Use `NewEtcdRWLocker` when you want shared readers and exclusive writers without changing the existing lock behavior. RW bookkeeping lives in a private etcd namespace, while legacy and RW writers still share the same writer queue, so legacy locks and RW locks honor each other during a rollout.
 
-During a migration from `go-etcd-lock` `v5.0.9` to `v6.*` you can safely run both implementations against the same lock key. Existing `EtcdLocker` locks remain write locks, `EtcdRWLocker.AcquireWrite` uses the same write-lock mechanism, and `EtcdRWLocker.AcquireRead` joins the same etcd queue with reader-specific entries. That means legacy writers wait for active RW readers, and new RW readers will not bypass older legacy writers already queued on the lock.
+During a migration from `go-etcd-lock` `v5.0.9` to `v6.*` you can safely run both implementations against the same lock key. Existing `EtcdLocker` locks remain write locks, `EtcdRWLocker.AcquireWrite` uses the same write-lock mechanism, and `EtcdRWLocker.AcquireRead` publishes reader state in private metadata. That means legacy writers still wait for active RW readers, new RW readers will not bypass older legacy writers already queued on the lock, and internal RW metadata does not leak into the public legacy keyspace.
 
 ```mermaid
 sequenceDiagram
