@@ -29,6 +29,8 @@ func (l *EtcdRWLock) upgrade(wait bool) (Lock, error) {
 		return nil, errgo.New("nil lock")
 	}
 
+	// Upgrade is deliberately non-atomic: we first mark the intent to write,
+	// then release the read entry, then compete for the legacy write lock.
 	l.Lock()
 	if l.released {
 		l.Unlock()
@@ -55,7 +57,10 @@ func (l *EtcdRWLock) upgrade(wait bool) (Lock, error) {
 
 	writeLocker := locker.writeLocker()
 	intentKey := rwWriterIntentKey(resourceKey, writeSession.Lease())
-	if err := writeLocker.createWriterIntent(intentKey, writeSession.Lease()); err != nil {
+	// Publishing writer intent before dropping the read lock prevents later
+	// readers from slipping in during the upgrade window.
+	err = writeLocker.createWriterIntent(intentKey, writeSession.Lease())
+	if err != nil {
 		l.finishUpgrade()
 		closeErr := closeRWSession(writeSession)
 		return nil, noteAcquireFailure(err, closeErr, "fail to upgrade read lock")
@@ -109,6 +114,9 @@ func (locker *EtcdRWLocker) acquireWriteWithSession(resourceKey string, session 
 	timeout := time.NewTimer(locker.maxTryLockTimeout)
 	defer timeout.Stop()
 
+	// Upgrade reuses the same retry model as the normal write path:
+	// per-attempt tryLockTimeout, cooldown between retries, and a global
+	// maxTryLockTimeout for the whole wait.
 	tryLockErr := error(nil)
 	writeLocker := locker.writeLocker()
 	for {
