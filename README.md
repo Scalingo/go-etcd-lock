@@ -33,6 +33,56 @@ if err != nil {
 }
 ```
 
+## Reader / Writer Lock
+
+Use `NewEtcdRWLocker` when you want shared readers and exclusive writers without changing the existing lock behavior. RW bookkeeping lives in a private etcd namespace, while legacy and RW writers still share the same writer queue, so legacy locks and RW locks honor each other during a rollout.
+
+During a migration from `go-etcd-lock` `v5.0.9` to `v6.*` you can safely run both implementations against the same lock key. Existing `EtcdLocker` locks remain write locks, `EtcdRWLocker.AcquireWrite` uses the same write-lock mechanism, and `EtcdRWLocker.AcquireRead` publishes reader state in private metadata. That means legacy writers still wait for active RW readers, new RW readers will not bypass older legacy writers already queued on the lock, and internal RW metadata does not leak into the public legacy keyspace.
+
+```mermaid
+sequenceDiagram
+    participant R1 as RW reader #1
+    participant E as etcd shared queue
+    participant W1 as legacy writer
+    participant R2 as later RW reader
+
+    R1->>E: add reader entry
+    Note over R1,E: reader is active
+
+    W1->>E: add writer waiter / intent
+    Note over W1,E: writer is queued behind active reader
+
+    R2->>E: check queue for earlier writers
+    E-->>R2: writer already queued
+    Note over R2,E: R2 waits instead of bypassing W1
+
+    R1->>E: release reader entry
+    E-->>W1: writer reaches front of queue
+    Note over W1,E: writer acquires lock
+
+    W1->>E: release writer lock
+    E-->>R2: no earlier writer remains
+    Note over R2,E: reader can now enter
+```
+
+```go
+locker := lock.NewEtcdRWLocker(client)
+
+readLock, err := locker.AcquireRead("/name", 60)
+if err != nil {
+	panic(err)
+}
+defer readLock.Release()
+```
+
+```go
+writeLock, err := locker.WaitAcquireWrite("/name", 60)
+if err != nil {
+	panic(err)
+}
+defer writeLock.Release()
+```
+
 ## Testing
 
 You need a etcd instance running on `localhost:2379`, then:
@@ -47,6 +97,7 @@ From the `/lock/` folder:
 
 ```
 mockgen -destination lockmock/gomock_locker.go -package lockmock github.com/Scalingo/go-etcd-lock/lock Locker
+mockgen -destination lockmock/gomock_rw_locker.go -package lockmock github.com/Scalingo/go-etcd-lock/lock RWLocker
 mockgen -destination lockmock/gomock_lock.go -package lockmock github.com/Scalingo/go-etcd-lock/lock Lock
 ```
 
