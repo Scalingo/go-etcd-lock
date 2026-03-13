@@ -52,6 +52,8 @@ type EtcdRWLock struct {
 	released bool
 	// upgrading suppresses normal release while the read lock is being converted.
 	upgrading bool
+	// releaseRequested records a release that arrived while upgrade was in flight.
+	releaseRequested bool
 }
 
 func NewEtcdRWLocker(client *etcdv3.Client, opts ...EtcdLockerOpt) RWLocker {
@@ -267,6 +269,7 @@ func (l *EtcdRWLock) Release() error {
 		return nil
 	}
 	if l.upgrading {
+		l.releaseRequested = true
 		return nil
 	}
 
