@@ -41,18 +41,12 @@ You need a etcd instance running on `localhost:2379`, then:
 go test ./...
 ```
 
-## Generate mock
-
-From the `/lock/` folder:
-
-```
-mockgen -destination lockmock/gomock_locker.go -package lockmock github.com/Scalingo/go-etcd-lock/lock Locker
-mockgen -destination lockmock/gomock_lock.go -package lockmock github.com/Scalingo/go-etcd-lock/lock Lock
-```
-
 ## Release a New Version
 
-Bump new version number in `CHANGELOG.md` and `README.md`.
+Bump new version number in:
+- `CHANGELOG.md`
+- `README.md`
+- `go.mod`, `mocks.json` and all imports in case of a new major version
 
 Commit, tag and create a new release:
 

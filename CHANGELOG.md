@@ -2,6 +2,8 @@
 
 ## To be Released
 
+* refactor: replace `github.com/golang/mock` with `go.uber.org/mock`
+
 ## v5.0.9
 
 * build(go): use go 1.24
