@@ -1,0 +1,14 @@
+{
+  "base_directory": "github.com/Scalingo/go-etcd-lock",
+  "base_package": "github.com/Scalingo/go-etcd-lock/v5",
+  "mocks": [
+    {
+      "src_package": "lock",
+      "interface": "Locker"
+    },
+    {
+      "src_package": "lock",
+      "interface": "Lock"
+    }
+  ]
+}
