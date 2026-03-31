@@ -35,7 +35,8 @@ func (l *EtcdLock) Release() error {
 	}
 
 	var closeErr error
-	if err := l.session.Close(); err != nil {
+	err := l.session.Close()
+	if err != nil {
 		closeErr = errors.Wrap(ctx, err, "close lock session")
 	}
 

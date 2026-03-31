@@ -229,13 +229,13 @@ func (locker *EtcdRWLocker) writerState(resourceKey string, opts ...etcdv3.OpOpt
 // Older binaries do not perform that extra check: they only observe the public
 // legacy queue and can therefore write while an RW reader is still active.
 // Mixed-version rollout is only safe once every writer path uses this code.
-func (locker *EtcdLocker) hasAnyReader(resourceKey string) (bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), locker.tryLockTimeout)
+func (locker *EtcdLocker) hasAnyReader(ctx context.Context, resourceKey string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, locker.tryLockTimeout)
 	defer cancel()
 
 	resp, err := locker.client.Get(ctx, rwReadersPrefix(resourceKey), etcdv3.WithPrefix(), etcdv3.WithLimit(1))
 	if err != nil {
-		return false, errors.Wrap(context.Background(), err, "list active readers")
+		return false, errors.Wrap(ctx, err, "list active readers")
 	}
 
 	return len(resp.Kvs) > 0, nil
@@ -257,7 +257,8 @@ func (l *EtcdRWLock) Release() error {
 	if err != nil {
 		return errors.Wrap(context.Background(), err, "delete read lock key")
 	}
-	if err := closeRWSession(l.session); err != nil {
+	err = closeRWSession(l.session)
+	if err != nil {
 		return err
 	}
 
