@@ -243,7 +243,7 @@ func (locker *EtcdLocker) hasAnyReader(resourceKey string) (bool, error) {
 
 func (l *EtcdRWLock) Release() error {
 	if l == nil {
-		return errors.New(context.Background(), "nil lock")
+		panic("nil rw lock")
 	}
 
 	l.Lock()
