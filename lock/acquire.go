@@ -7,7 +7,8 @@ import (
 
 	etcdv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
-	"gopkg.in/errgo.v1"
+
+	"github.com/Scalingo/go-utils/errors/v3"
 )
 
 type ErrAlreadyLocked struct{}
@@ -91,11 +92,13 @@ func (locker *EtcdLocker) WaitAcquire(key string, ttl int) (Lock, error) {
 }
 
 func (locker *EtcdLocker) acquire(key string, ttl int, wait bool) (Lock, error) {
+	ctx := context.Background()
+
 	// A Session is a GRPC connection to ETCD API v3, the connection should be
 	// closed to release resources.
 	session, err := concurrency.NewSession(locker.client, concurrency.WithTTL(ttl))
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(ctx, err, "create lock session")
 	}
 
 	key = addPrefix(key)
@@ -117,12 +120,12 @@ func (locker *EtcdLocker) acquire(key string, ttl int, wait bool) (Lock, error) 
 			if tryLockErr == context.DeadlineExceeded {
 				return nil, &ErrAlreadyLocked{}
 			}
-			return nil, errgo.Notef(tryLockErr, "fail to acquire lock")
+			return nil, errors.Wrap(ctx, tryLockErr, "acquire lock")
 		default:
 		}
 
 		if !intentCreated {
-			tryLockErr = locker.createWriterIntent(intentKey, session.Lease())
+			tryLockErr = locker.createWriterIntent(ctx, intentKey, session.Lease())
 			if tryLockErr == nil {
 				intentCreated = true
 			} else {
@@ -135,7 +138,7 @@ func (locker *EtcdLocker) acquire(key string, ttl int, wait bool) (Lock, error) 
 		// * If the attempt fails and we're still waiting, we retry the operation after a short cooldown
 		// * if the attempt fails and we're not waiting, the lock is already taken
 		// * if the attempt succeeded, keep on
-		tryLockErr = locker.tryLock(mutex)
+		tryLockErr = locker.tryLock(ctx, mutex)
 
 		shouldWait := wait && tryLockErr == context.DeadlineExceeded
 		shouldRetry := shouldWait || (tryLockErr != nil && tryLockErr != context.DeadlineExceeded)
@@ -159,49 +162,48 @@ func (locker *EtcdLocker) acquire(key string, ttl int, wait bool) (Lock, error) 
 	if intentCreated {
 		lock.intentKey = intentKey
 	}
-	err = locker.waitForReaders(key, wait, deadline, lock)
+	err = locker.waitForReaders(ctx, key, wait, deadline)
 	if err != nil {
-		return nil, err
+		releaseErr := lock.Release()
+		var alreadyLocked *ErrAlreadyLocked
+		if errors.As(err, &alreadyLocked) {
+			if releaseErr != nil {
+				return nil, noteAcquireFailure(&ErrAlreadyLocked{}, releaseErr, "acquire lock")
+			}
+			return nil, errors.Wrap(ctx, err, "acquire lock")
+		}
+		return nil, noteAcquireFailure(err, releaseErr, "acquire lock")
 	}
 
-	go func() {
-		time.AfterFunc(time.Duration(ttl)*time.Second, func() {
-			lock.Release()
-		})
-	}()
+	scheduleRelease(lock, ttl)
 
 	return lock, nil
 }
 
-func (locker *EtcdLocker) tryLock(mutex *concurrency.Mutex) error {
-	ctx, cancel := context.WithTimeout(context.Background(), locker.tryLockTimeout)
+func (locker *EtcdLocker) tryLock(ctx context.Context, mutex *concurrency.Mutex) error {
+	ctx, cancel := context.WithTimeout(ctx, locker.tryLockTimeout)
 	defer cancel()
 	return mutex.Lock(ctx)
 }
 
-func (locker *EtcdLocker) waitForReaders(resourceKey string, wait bool, deadline time.Time, lock *EtcdLock) error {
+func (locker *EtcdLocker) waitForReaders(ctx context.Context, resourceKey string, wait bool, deadline time.Time) error {
 	for {
 		readersPresent, err := locker.hasAnyReader(resourceKey)
 		if err != nil {
-			releaseErr := lock.Release()
-			return noteAcquireFailure(err, releaseErr, "fail to acquire lock")
+			return errors.Wrap(ctx, err, "check current readers")
 		}
 		if !readersPresent {
 			return nil
 		}
 		if !wait || time.Now().After(deadline) {
-			releaseErr := lock.Release()
-			if releaseErr != nil {
-				return noteAcquireFailure(&ErrAlreadyLocked{}, releaseErr, "fail to acquire lock")
-			}
 			return &ErrAlreadyLocked{}
 		}
 		time.Sleep(locker.cooldownTryLockDuration)
 	}
 }
 
-func (locker *EtcdLocker) createWriterIntent(intentKey string, leaseID etcdv3.LeaseID) error {
-	ctx, cancel := context.WithTimeout(context.Background(), locker.tryLockTimeout)
+func (locker *EtcdLocker) createWriterIntent(ctx context.Context, intentKey string, leaseID etcdv3.LeaseID) error {
+	ctx, cancel := context.WithTimeout(ctx, locker.tryLockTimeout)
 	defer cancel()
 
 	resp, err := locker.client.Txn(ctx).
@@ -210,10 +212,10 @@ func (locker *EtcdLocker) createWriterIntent(intentKey string, leaseID etcdv3.Le
 		Else(etcdv3.OpGet(intentKey)).
 		Commit()
 	if err != nil {
-		return err
+		return errors.Wrap(ctx, err, "create writer intent")
 	}
 	if !resp.Succeeded && len(resp.Responses[0].GetResponseRange().Kvs) == 0 {
-		return errgo.Newf("writer intent key %q already exists", intentKey)
+		return errors.Newf(ctx, "writer intent key %q already exists", intentKey)
 	}
 
 	return nil

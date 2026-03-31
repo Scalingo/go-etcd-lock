@@ -5,11 +5,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Scalingo/go-utils/errors/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	etcdv3 "go.etcd.io/etcd/client/v3"
-	"gopkg.in/errgo.v1"
 )
 
 func TestRWLockAcquireRead(t *testing.T) {
@@ -423,7 +423,7 @@ func TestRWLockRelease(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	t.Run("release a nil rw lock should not panic", func(t *testing.T) {
+	t.Run("release a nil rw lock should return an error", func(t *testing.T) {
 		var lock *EtcdRWLock
 		err := lock.Release()
 		require.Error(t, err)
@@ -479,7 +479,7 @@ func assertAlreadyLocked(t *testing.T, err error) {
 	t.Helper()
 
 	var lockErr *ErrAlreadyLocked
-	assert.ErrorAs(t, errgo.Cause(err), &lockErr)
+	assert.True(t, errors.As(err, &lockErr))
 }
 
 func assertWaitAround(t *testing.T, duration time.Duration) {

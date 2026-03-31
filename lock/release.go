@@ -2,24 +2,42 @@ package lock
 
 import (
 	"context"
+	"time"
 
-	"gopkg.in/errgo.v1"
+	"github.com/Scalingo/go-utils/errors/v3"
 )
 
+func scheduleRelease(lock Lock, ttl int) {
+	time.AfterFunc(time.Duration(ttl)*time.Second, func() {
+		_ = lock.Release()
+	})
+}
+
 func (l *EtcdLock) Release() error {
+	ctx := context.Background()
 	if l == nil {
-		return errgo.New("nil lock")
+		return errors.New(ctx, "nil lock")
 	}
 	l.Lock()
 	defer l.Unlock()
 
-	unlockErr := l.mutex.Unlock(context.Background())
+	unlockErr := l.mutex.Unlock(ctx)
+	if unlockErr != nil {
+		unlockErr = errors.Wrap(ctx, unlockErr, "unlock lock")
+	}
+
+	var intentErr error
 	if l.intentKey != "" {
-		_, err := l.client.Delete(context.Background(), l.intentKey)
-		if unlockErr == nil && err != nil {
-			unlockErr = err
+		_, err := l.client.Delete(ctx, l.intentKey)
+		if err != nil {
+			intentErr = errors.Wrap(ctx, err, "delete writer intent")
 		}
 	}
-	_ = l.session.Close()
-	return unlockErr
+
+	var closeErr error
+	if err := l.session.Close(); err != nil {
+		closeErr = errors.Wrap(ctx, err, "close lock session")
+	}
+
+	return errors.Join(unlockErr, intentErr, closeErr)
 }
