@@ -423,10 +423,11 @@ func TestRWLockRelease(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	t.Run("release a nil rw lock should return an error", func(t *testing.T) {
+	t.Run("release a nil rw lock should panic", func(t *testing.T) {
 		var lock *EtcdRWLock
-		err := lock.Release()
-		require.Error(t, err)
+		require.PanicsWithValue(t, "nil rw lock", func() {
+			_ = lock.Release()
+		})
 	})
 }
 
