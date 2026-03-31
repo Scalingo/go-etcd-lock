@@ -175,11 +175,14 @@ func (locker *EtcdLocker) acquire(key string, ttl int, wait bool) (Lock, error) 
 		var alreadyLocked *ErrAlreadyLocked
 		if errors.As(err, &alreadyLocked) {
 			if releaseErr != nil {
-				return nil, noteAcquireFailure(ctx, &ErrAlreadyLocked{}, releaseErr, "acquire lock")
+				return nil, errors.Wrapf(ctx, &ErrAlreadyLocked{}, "acquire lock (cleanup: %v)", releaseErr)
 			}
 			return nil, errors.Wrap(ctx, err, "acquire lock")
 		}
-		return nil, noteAcquireFailure(ctx, err, releaseErr, "acquire lock")
+		if releaseErr != nil {
+			return nil, errors.Wrapf(ctx, err, "acquire lock (cleanup: %v)", releaseErr)
+		}
+		return nil, errors.Wrap(ctx, err, "acquire lock")
 	}
 
 	scheduleRelease(lock, ttl)
