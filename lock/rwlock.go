@@ -79,6 +79,14 @@ func (locker *EtcdRWLocker) Wait(key string) error {
 	return locker.writer.Wait(key)
 }
 
+// acquireRead coordinates with both legacy writers and RW writers:
+// 1. check whether a writer is already active or queued for this resource;
+// 2. create a leased reader entry in the private RW metadata tree;
+// 3. compare that reader revision with existing writers;
+// 4. if an earlier writer exists, drop the provisional reader entry and retry.
+//
+// Readers can run concurrently with each other, but they must never jump ahead
+// of a writer that was already visible in the shared ordering.
 func (locker *EtcdRWLocker) acquireRead(key string, ttl int, wait bool) (Lock, error) {
 	ctx := context.Background()
 	resourceKey := addPrefix(key)
@@ -168,6 +176,10 @@ func (locker *EtcdRWLocker) hasAnyWriter(resourceKey string) (bool, error) {
 	return locker.hasWriter(resourceKey)
 }
 
+// Writers are visible in two places:
+//   - the public legacy queue under "<resource>/", shared by legacy and RW writers;
+//   - the private writer-intent tree, used by waiting legacy writers before they
+//     have fully acquired the mutex.
 func (locker *EtcdRWLocker) hasWriter(resourceKey string, opts ...etcdv3.OpOption) (bool, error) {
 	intentResp, resp, err := locker.writerState(resourceKey, opts...)
 	if err != nil {
@@ -206,6 +218,11 @@ func (locker *EtcdRWLocker) writerState(resourceKey string, opts ...etcdv3.OpOpt
 	return intentResp, resp, nil
 }
 
+// Upgraded legacy writers consult the private reader tree after taking the
+// legacy mutex, so active RW readers still block writes until they drain.
+// Older binaries do not perform that extra check: they only observe the public
+// legacy queue and can therefore write while an RW reader is still active.
+// Mixed-version rollout is only safe once every writer path uses this code.
 func (locker *EtcdLocker) hasAnyReader(resourceKey string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), locker.tryLockTimeout)
 	defer cancel()
@@ -254,6 +271,10 @@ func closeRWSession(session *concurrency.Session) error {
 	return errors.Wrap(context.Background(), err, "close rw lock session")
 }
 
+// Key layout:
+// - public writer queue: "<resource>/..."
+// - private readers: "/go-etcd-lock-rw/readers/<encoded-resource>/<lease>"
+// - private writer intents: "/go-etcd-lock-rw/writer-intents/<encoded-resource>/<lease>"
 func rwQueuePrefix(resourceKey string) string {
 	return resourceKey + "/"
 }

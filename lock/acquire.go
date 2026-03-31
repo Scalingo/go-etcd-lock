@@ -91,6 +91,13 @@ func (locker *EtcdLocker) WaitAcquire(key string, ttl int) (Lock, error) {
 	return locker.acquire(key, ttl, true)
 }
 
+// acquire keeps the legacy writer path compatible with RW readers.
+//
+// In waiting mode, a writer first publishes a private intent key and keeps that
+// same identity for the full wait window. RW readers consult that intent before
+// admitting new readers, so a waiting writer does not lose its place every time
+// mutex.Lock retries. Once the legacy mutex is acquired, the writer still waits
+// for already-active readers to drain before the lock is considered acquired.
 func (locker *EtcdLocker) acquire(key string, ttl int, wait bool) (Lock, error) {
 	ctx := context.Background()
 
@@ -186,6 +193,9 @@ func (locker *EtcdLocker) tryLock(ctx context.Context, mutex *concurrency.Mutex)
 	return mutex.Lock(ctx)
 }
 
+// waitForReaders is intentionally read-only: it only observes RW reader state.
+// The caller owns the provisional writer lock and is responsible for cleanup if
+// this wait fails or times out.
 func (locker *EtcdLocker) waitForReaders(ctx context.Context, resourceKey string, wait bool, deadline time.Time) error {
 	for {
 		readersPresent, err := locker.hasAnyReader(resourceKey)
@@ -202,6 +212,9 @@ func (locker *EtcdLocker) waitForReaders(ctx context.Context, resourceKey string
 	}
 }
 
+// createWriterIntent publishes "a writer is waiting" in the private RW metadata
+// tree. Readers check it before admitting new read locks, which prevents them
+// from bypassing a writer that is still waiting on the legacy mutex queue.
 func (locker *EtcdLocker) createWriterIntent(ctx context.Context, intentKey string, leaseID etcdv3.LeaseID) error {
 	ctx, cancel := context.WithTimeout(ctx, locker.tryLockTimeout)
 	defer cancel()
