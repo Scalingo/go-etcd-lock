@@ -271,26 +271,40 @@ func closeRWSession(session *concurrency.Session) error {
 	return errors.Wrap(context.Background(), err, "close rw lock session")
 }
 
-// Key layout:
-// - public writer queue: "<resource>/..."
-// - private readers: "/go-etcd-lock-rw/readers/<encoded-resource>/<lease>"
-// - private writer intents: "/go-etcd-lock-rw/writer-intents/<encoded-resource>/<lease>"
+// Key layout for a resourceKey like "/etcd-lock/my-lock":
+// - public writer queue prefix: "/etcd-lock/my-lock/"
+// - private readers prefix: "/go-etcd-lock-rw/readers/<base64('/etcd-lock/my-lock')>/"
+// - private reader key: "/go-etcd-lock-rw/readers/<base64('/etcd-lock/my-lock')>/<lease>"
+// - private writer intents prefix: "/go-etcd-lock-rw/writer-intents/<base64('/etcd-lock/my-lock')>/"
+// - private writer intent key: "/go-etcd-lock-rw/writer-intents/<base64('/etcd-lock/my-lock')>/<lease>"
+//
+// The helper names follow that split:
+// - "...Prefix" returns the directory-like prefix ending with "/"
+// - "...Key" appends one lease id under that prefix
 func rwQueuePrefix(resourceKey string) string {
 	return resourceKey + "/"
 }
 
+// rwReadersPrefix returns the private directory that contains every active
+// reader entry for one resource.
 func rwReadersPrefix(resourceKey string) string {
-	return rwMetadataKeyPrefix(resourceKey, rwReaderDirectory)
+	return rwMetadataResourcePrefix(resourceKey, rwReaderDirectory)
 }
 
+// rwReaderKey returns the exact etcd key for one reader lease under the reader
+// directory of the resource.
 func rwReaderKey(resourceKey string, leaseID etcdv3.LeaseID) string {
 	return fmt.Sprintf("%s%x", rwReadersPrefix(resourceKey), leaseID)
 }
 
+// rwWriterIntentsPrefix returns the private directory that contains waiting
+// writer intents for one resource.
 func rwWriterIntentsPrefix(resourceKey string) string {
-	return rwMetadataKeyPrefix(resourceKey, rwWriterIntentDirectory)
+	return rwMetadataResourcePrefix(resourceKey, rwWriterIntentDirectory)
 }
 
+// rwWriterIntentKey returns the exact etcd key for one waiting writer lease
+// under the writer-intent directory of the resource.
 func rwWriterIntentKey(resourceKey string, leaseID etcdv3.LeaseID) string {
 	return fmt.Sprintf("%s%x", rwWriterIntentsPrefix(resourceKey), leaseID)
 }
@@ -303,13 +317,10 @@ func noteAcquireFailure(ctx context.Context, err error, cleanupErr error, messag
 	return errors.Wrapf(ctx, err, "%s (cleanup: %v)", message, cleanupErr)
 }
 
-func rwMetadataKeyPrefix(resourceKey string, kind string) string {
-	return fmt.Sprintf("%s/%s/%s/", rwMetadataPrefix, kind, rwMetadataResourceSegment(resourceKey))
-}
-
-func rwMetadataResourceSegment(resourceKey string) string {
+func rwMetadataResourcePrefix(resourceKey string, kind string) string {
 	// A raw resource key cannot be embedded directly in a metadata prefix tree:
 	// "/foo" would become a prefix of "/foo/bar". Encoding keeps each resource
 	// in a single opaque path segment, so prefix scans stay scoped to one lock.
-	return base64.RawURLEncoding.EncodeToString([]byte(resourceKey))
+	// Example: "/etcd-lock/my-lock" becomes one "<encoded-resource>" segment.
+	return fmt.Sprintf("%s/%s/%s/", rwMetadataPrefix, kind, base64.RawURLEncoding.EncodeToString([]byte(resourceKey)))
 }
