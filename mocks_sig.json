@@ -1,4 +1,5 @@
 {
   "github.com/Scalingo/go-etcd-lock/lock.Lock": "6e 7a 5d 4c 87 ad f2 63 73 4f 1f c9 27 14 ec 8b 1a 55 cf 42",
-  "github.com/Scalingo/go-etcd-lock/lock.Locker": "a6 54 44 a3 fb 94 92 f7 ac 0b b6 ba 19 43 dc 16 3c 4a cc d4"
+  "github.com/Scalingo/go-etcd-lock/lock.Locker": "a6 54 44 a3 fb 94 92 f7 ac 0b b6 ba 19 43 dc 16 3c 4a cc d4",
+  "github.com/Scalingo/go-etcd-lock/lock.RWLocker": "NOFILE"
 }

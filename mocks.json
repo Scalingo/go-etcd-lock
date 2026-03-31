@@ -9,6 +9,10 @@
     {
       "src_package": "lock",
       "interface": "Lock"
+    },
+    {
+      "src_package": "lock",
+      "interface": "RWLocker"
     }
   ]
 }
