@@ -1,4 +1,4 @@
-# etcd-lock v5.0.9
+# etcd-lock v5.0.10
 
 ## Import
 
@@ -91,24 +91,17 @@ You need a etcd instance running on `localhost:2379`, then:
 go test ./...
 ```
 
-## Generate mock
-
-From the `/lock/` folder:
-
-```
-mockgen -destination lockmock/gomock_locker.go -package lockmock github.com/Scalingo/go-etcd-lock/lock Locker
-mockgen -destination lockmock/gomock_rw_locker.go -package lockmock github.com/Scalingo/go-etcd-lock/lock RWLocker
-mockgen -destination lockmock/gomock_lock.go -package lockmock github.com/Scalingo/go-etcd-lock/lock Lock
-```
-
 ## Release a New Version
 
-Bump new version number in `CHANGELOG.md` and `README.md`.
+Bump new version number in:
+- `CHANGELOG.md`
+- `README.md`
+- `go.mod`, `mocks.json` and all imports in case of a new major version
 
 Commit, tag and create a new release:
 
 ```sh
-version="5.0.9"
+version="5.0.10"
 
 git switch --create release/${version}
 git add CHANGELOG.md README.md
