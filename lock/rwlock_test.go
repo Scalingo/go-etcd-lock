@@ -2,6 +2,7 @@ package lock
 
 import (
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -428,6 +429,21 @@ func TestRWLockRelease(t *testing.T) {
 		require.PanicsWithValue(t, "nil rw lock", func() {
 			_ = lock.Release()
 		})
+	})
+
+	t.Run("failed release does not mark the read lock as released", func(t *testing.T) {
+		cli := client()
+		cli.Close()
+
+		lock := &EtcdRWLock{
+			Mutex:   &sync.Mutex{},
+			client:  cli,
+			lockKey: "/rw-release-delete-error",
+		}
+
+		err := lock.Release()
+		require.Error(t, err)
+		require.False(t, lock.released)
 	})
 }
 
