@@ -13,14 +13,14 @@ import (
 func TestAcquire(t *testing.T) {
 	t.Run("A lock shouldn't be acquired twice", func(t *testing.T) {
 		locker := NewEtcdLocker(client(), WithTryLockTimeout(500*time.Millisecond))
-		lock, err := locker.Acquire("/lock", 10)
+		firstLock, err := locker.Acquire("/lock", 10)
 		require.NoError(t, err)
 		t.Cleanup(func() {
-			require.NoError(t, lock.Release())
+			require.NoError(t, firstLock.Release())
 		})
 
-		assert.NotNil(t, lock)
-		lock, err = locker.Acquire("/lock", 10)
+		assert.NotNil(t, firstLock)
+		lock, err := locker.Acquire("/lock", 10)
 		require.Error(t, err)
 		var lockErr *ErrAlreadyLocked
 		assert.True(t, errors.As(err, &lockErr))
@@ -49,12 +49,12 @@ func TestWaitAcquire(t *testing.T) {
 				WithTryLockTimeout(500*time.Millisecond),
 				WithCooldownTryLockDuration(0),
 			)
-			lock, err := locker.Acquire("/lock-wait-acquire", 2)
+			initialLock, err := locker.Acquire("/lock-wait-acquire", 2)
 			require.NoError(t, err)
-			assert.NotNil(t, lock)
+			assert.NotNil(t, initialLock)
 
 			t1 := time.Now()
-			lock, err = locker.WaitAcquire("/lock-wait-acquire", 2)
+			lock, err := locker.WaitAcquire("/lock-wait-acquire", 2)
 			t2 := time.Now()
 
 			require.NoError(t, err)
@@ -73,6 +73,7 @@ func TestWaitAcquire(t *testing.T) {
 			require.NoError(t, err)
 			assert.NotNil(t, lock)
 			assert.Equal(t, 0, int(t2.Sub(t1).Seconds()))
+			require.NoError(t, lock.Release())
 		})
 
 		t.Run("it should not wait more than the maxTryLockTimeout", func(t *testing.T) {
@@ -81,8 +82,12 @@ func TestWaitAcquire(t *testing.T) {
 				WithTryLockTimeout(500*time.Millisecond),
 				WithMaxTryLockTimeout(time.Second),
 			)
+			initialLock, err := locker.Acquire("/lock-wait-acquire-timeout", 2)
+			require.NoError(t, err)
+			assert.NotNil(t, initialLock)
+
 			t1 := time.Now()
-			lock, err := locker.WaitAcquire("/lock-wait-acquire-free", 2)
+			lock, err := locker.WaitAcquire("/lock-wait-acquire-timeout", 2)
 			t2 := time.Now()
 
 			var lockErr *ErrAlreadyLocked
@@ -98,13 +103,8 @@ func TestWaitAcquire(t *testing.T) {
 			WithTryLockTimeout(500*time.Millisecond),
 			WithCooldownTryLockDuration(0),
 		)
-		initialLock, err := locker.Acquire("/lock-double-wait", 2)
+		_, err := locker.Acquire("/lock-double-wait", 2)
 		require.NoError(t, err)
-		t.Cleanup(func() {
-			if initialLock != nil {
-				require.NoError(t, initialLock.Release())
-			}
-		})
 		t1 := time.Now()
 		ends := make(chan time.Time)
 		locks := make(chan Lock)
@@ -137,6 +137,7 @@ func TestWaitAcquire(t *testing.T) {
 			assert.NotNil(t, lock)
 			t2 = <-ends
 			assert.Equal(t, 4, int(t2.Sub(t1).Seconds()))
+			require.NoError(t, lock.Release())
 		})
 	})
 }
