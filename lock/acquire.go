@@ -152,10 +152,14 @@ func (locker *EtcdLocker) acquire(key string, ttl int, wait bool) (Lock, error) 
 		if shouldRetry {
 			time.Sleep(locker.cooldownTryLockDuration)
 			continue
-		} else if tryLockErr == context.DeadlineExceeded {
+		}
+
+		if !shouldRetry && tryLockErr == context.DeadlineExceeded {
 			session.Close()
 			return nil, &ErrAlreadyLocked{}
-		} else {
+		}
+
+		if !shouldRetry {
 			break
 		}
 	}
@@ -201,7 +205,7 @@ func (locker *EtcdLocker) tryLock(ctx context.Context, mutex *concurrency.Mutex)
 // this wait fails or times out.
 func (locker *EtcdLocker) waitForReaders(ctx context.Context, resourceKey string, wait bool, deadline time.Time) error {
 	for {
-		readersPresent, err := locker.hasAnyReader(resourceKey)
+		readersPresent, err := locker.hasAnyReader(ctx, resourceKey)
 		if err != nil {
 			return errors.Wrap(ctx, err, "check current readers")
 		}
