@@ -119,7 +119,7 @@ func (locker *EtcdRWLocker) acquireRead(key string, ttl int, wait bool) (Lock, e
 		myRev, err := locker.createReaderKey(ctx, lock.lockKey, session.Lease())
 		if err != nil {
 			closeErr := closeRWSession(session)
-			return nil, noteAcquireFailure(err, closeErr, "acquire read lock: create reader key")
+			return nil, noteAcquireFailure(ctx, err, closeErr, "acquire read lock: create reader key")
 		}
 
 		// A reader may proceed alongside other readers, but it must not bypass any
@@ -129,7 +129,7 @@ func (locker *EtcdRWLocker) acquireRead(key string, ttl int, wait bool) (Lock, e
 		writerAhead, err := locker.hasEarlierWriter(resourceKey, myRev-1)
 		if err != nil {
 			releaseErr := lock.Release()
-			return nil, noteAcquireFailure(err, releaseErr, "acquire read lock: check earlier writer")
+			return nil, noteAcquireFailure(ctx, err, releaseErr, "acquire read lock: check earlier writer")
 		}
 		if !writerAhead {
 			scheduleRelease(lock, ttl)
@@ -137,7 +137,7 @@ func (locker *EtcdRWLocker) acquireRead(key string, ttl int, wait bool) (Lock, e
 		}
 		releaseErr := lock.Release()
 		if releaseErr != nil {
-			return nil, noteAcquireFailure(&ErrAlreadyLocked{}, releaseErr, "release lock")
+			return nil, noteAcquireFailure(ctx, &ErrAlreadyLocked{}, releaseErr, "release lock")
 		}
 		if !wait || time.Now().After(deadline) {
 			return nil, &ErrAlreadyLocked{}
@@ -295,12 +295,12 @@ func rwWriterIntentKey(resourceKey string, leaseID etcdv3.LeaseID) string {
 	return fmt.Sprintf("%s%x", rwWriterIntentsPrefix(resourceKey), leaseID)
 }
 
-func noteAcquireFailure(err error, cleanupErr error, message string) error {
+func noteAcquireFailure(ctx context.Context, err error, cleanupErr error, message string) error {
 	if cleanupErr == nil {
-		return errors.Wrap(context.Background(), err, message)
+		return errors.Wrap(ctx, err, message)
 	}
 
-	return errors.Wrapf(context.Background(), err, "%s (cleanup: %v)", message, cleanupErr)
+	return errors.Wrapf(ctx, err, "%s (cleanup: %v)", message, cleanupErr)
 }
 
 func rwMetadataKeyPrefix(resourceKey string, kind string) string {
