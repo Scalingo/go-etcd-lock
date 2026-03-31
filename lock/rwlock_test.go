@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Scalingo/go-utils/errors/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
 	etcdv3 "go.etcd.io/etcd/client/v3"
+
+	"github.com/Scalingo/go-utils/errors/v3"
 )
 
 func TestRWLockAcquireRead(t *testing.T) {
