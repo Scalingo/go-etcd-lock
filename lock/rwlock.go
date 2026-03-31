@@ -10,7 +10,8 @@ import (
 	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	etcdv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
-	"gopkg.in/errgo.v1"
+
+	"github.com/Scalingo/go-utils/errors/v3"
 )
 
 // RW metadata must live outside the public "/etcd-lock/..." namespace so
@@ -30,13 +31,7 @@ type RWLocker interface {
 }
 
 type EtcdRWLocker struct {
-	client *etcdv3.Client
-	// tryLockTimeout is the timeout duration for one attempt to create the lock.
-	tryLockTimeout time.Duration
-	// maxTryLockTimeout is the maximal time the wait variants can block.
-	maxTryLockTimeout time.Duration
-	// cooldownTryLockDuration is the pause between retries while waiting.
-	cooldownTryLockDuration time.Duration
+	writer *EtcdLocker
 }
 
 type EtcdRWLock struct {
@@ -49,21 +44,18 @@ type EtcdRWLock struct {
 }
 
 func NewEtcdRWLocker(client *etcdv3.Client, opts ...EtcdLockerOpt) RWLocker {
-	base := &EtcdLocker{
+	writer := &EtcdLocker{
 		client:                  client,
 		tryLockTimeout:          30 * time.Second,
 		maxTryLockTimeout:       2 * time.Minute,
 		cooldownTryLockDuration: time.Second,
 	}
 	for _, opt := range opts {
-		opt(base)
+		opt(writer)
 	}
 
 	return &EtcdRWLocker{
-		client:                  client,
-		tryLockTimeout:          base.tryLockTimeout,
-		maxTryLockTimeout:       base.maxTryLockTimeout,
-		cooldownTryLockDuration: base.cooldownTryLockDuration,
+		writer: writer,
 	}
 }
 
@@ -76,49 +68,50 @@ func (locker *EtcdRWLocker) WaitAcquireRead(key string, ttl int) (Lock, error) {
 }
 
 func (locker *EtcdRWLocker) AcquireWrite(key string, ttl int) (Lock, error) {
-	return locker.writeLocker().Acquire(key, ttl)
+	return locker.writer.Acquire(key, ttl)
 }
 
 func (locker *EtcdRWLocker) WaitAcquireWrite(key string, ttl int) (Lock, error) {
-	return locker.writeLocker().WaitAcquire(key, ttl)
+	return locker.writer.WaitAcquire(key, ttl)
 }
 
 func (locker *EtcdRWLocker) Wait(key string) error {
-	return locker.writeLocker().Wait(key)
+	return locker.writer.Wait(key)
 }
 
 func (locker *EtcdRWLocker) acquireRead(key string, ttl int, wait bool) (Lock, error) {
+	ctx := context.Background()
 	resourceKey := addPrefix(key)
-	deadline := time.Now().Add(locker.maxTryLockTimeout)
+	deadline := time.Now().Add(locker.writer.maxTryLockTimeout)
 
 	for {
 		writerPresent, err := locker.hasAnyWriter(resourceKey)
 		if err != nil {
-			return nil, errgo.Notef(err, "fail to acquire read lock")
+			return nil, errors.Wrap(ctx, err, "check current write lock")
 		}
 		if writerPresent {
 			if !wait || time.Now().After(deadline) {
 				return nil, &ErrAlreadyLocked{}
 			}
-			time.Sleep(locker.cooldownTryLockDuration)
+			time.Sleep(locker.writer.cooldownTryLockDuration)
 			continue
 		}
 
-		session, err := concurrency.NewSession(locker.client, concurrency.WithTTL(ttl))
+		session, err := concurrency.NewSession(locker.writer.client, concurrency.WithTTL(ttl))
 		if err != nil {
-			return nil, err
+			return nil, errors.Wrap(ctx, err, "create read lock session")
 		}
 
 		lock := &EtcdRWLock{
 			Mutex:   &sync.Mutex{},
-			client:  locker.client,
+			client:  locker.writer.client,
 			session: session,
 			lockKey: rwReaderKey(resourceKey, session.Lease()),
 		}
-		myRev, err := locker.createReaderKey(lock.lockKey, session.Lease())
+		myRev, err := locker.createReaderKey(ctx, lock.lockKey, session.Lease())
 		if err != nil {
 			closeErr := closeRWSession(session)
-			return nil, noteAcquireFailure(err, closeErr, "fail to acquire read lock")
+			return nil, noteAcquireFailure(err, closeErr, "acquire read lock: create reader key")
 		}
 
 		// A reader may proceed alongside other readers, but it must not bypass any
@@ -128,47 +121,36 @@ func (locker *EtcdRWLocker) acquireRead(key string, ttl int, wait bool) (Lock, e
 		writerAhead, err := locker.hasEarlierWriter(resourceKey, myRev-1)
 		if err != nil {
 			releaseErr := lock.Release()
-			return nil, noteAcquireFailure(err, releaseErr, "fail to acquire read lock")
+			return nil, noteAcquireFailure(err, releaseErr, "acquire read lock: check earlier writer")
 		}
 		if !writerAhead {
-			locker.scheduleRelease(lock, ttl)
+			scheduleRelease(lock, ttl)
 			return lock, nil
 		}
 		releaseErr := lock.Release()
 		if releaseErr != nil {
-			return nil, noteAcquireFailure(&ErrAlreadyLocked{}, releaseErr, "fail to acquire read lock")
+			return nil, noteAcquireFailure(&ErrAlreadyLocked{}, releaseErr, "release lock")
 		}
 		if !wait || time.Now().After(deadline) {
 			return nil, &ErrAlreadyLocked{}
 		}
-		time.Sleep(locker.cooldownTryLockDuration)
+		time.Sleep(locker.writer.cooldownTryLockDuration)
 	}
 }
 
-func (locker *EtcdRWLocker) writeLocker() *EtcdLocker {
-	// RW writes intentionally reuse the legacy writer path so old and new writers
-	// keep the same writer-vs-writer ordering during rollout.
-	return &EtcdLocker{
-		client:                  locker.client,
-		tryLockTimeout:          locker.tryLockTimeout,
-		maxTryLockTimeout:       locker.maxTryLockTimeout,
-		cooldownTryLockDuration: locker.cooldownTryLockDuration,
-	}
-}
-
-func (locker *EtcdRWLocker) createReaderKey(lockKey string, leaseID etcdv3.LeaseID) (int64, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), locker.tryLockTimeout)
+func (locker *EtcdRWLocker) createReaderKey(ctx context.Context, lockKey string, leaseID etcdv3.LeaseID) (int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, locker.writer.tryLockTimeout)
 	defer cancel()
 
-	resp, err := locker.client.Txn(ctx).
+	resp, err := locker.writer.client.Txn(ctx).
 		If(etcdv3.Compare(etcdv3.CreateRevision(lockKey), "=", 0)).
 		Then(etcdv3.OpPut(lockKey, "", etcdv3.WithLease(leaseID))).
 		Commit()
 	if err != nil {
-		return 0, err
+		return 0, errors.Wrap(ctx, err, "create reader key")
 	}
 	if !resp.Succeeded {
-		return 0, errgo.Newf("reader key %q already exists", lockKey)
+		return 0, errors.Newf(ctx, "reader key %q already exists", lockKey)
 	}
 
 	return resp.Header.Revision, nil
@@ -179,19 +161,15 @@ func (locker *EtcdRWLocker) hasEarlierWriter(resourceKey string, maxCreateRev in
 		return false, nil
 	}
 
-	intentResp, resp, err := locker.writerState(resourceKey, etcdv3.WithMaxCreateRev(maxCreateRev))
-	if err != nil {
-		return false, err
-	}
-	if len(intentResp.Kvs) > 0 {
-		return true, nil
-	}
-
-	return len(resp.Kvs) > 0, nil
+	return locker.hasWriter(resourceKey, etcdv3.WithMaxCreateRev(maxCreateRev))
 }
 
 func (locker *EtcdRWLocker) hasAnyWriter(resourceKey string) (bool, error) {
-	intentResp, resp, err := locker.writerState(resourceKey)
+	return locker.hasWriter(resourceKey)
+}
+
+func (locker *EtcdRWLocker) hasWriter(resourceKey string, opts ...etcdv3.OpOption) (bool, error) {
+	intentResp, resp, err := locker.writerState(resourceKey, opts...)
 	if err != nil {
 		return false, err
 	}
@@ -203,26 +181,26 @@ func (locker *EtcdRWLocker) hasAnyWriter(resourceKey string) (bool, error) {
 }
 
 func (locker *EtcdRWLocker) writerState(resourceKey string, opts ...etcdv3.OpOption) (*etcdv3.GetResponse, *etcdv3.GetResponse, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), locker.tryLockTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), locker.writer.tryLockTimeout)
 	defer cancel()
 
 	queueOpts := append([]etcdv3.OpOption{etcdv3.WithPrefix()}, opts...)
-	resp, err := locker.client.Get(
+	resp, err := locker.writer.client.Get(
 		ctx,
 		rwQueuePrefix(resourceKey),
 		queueOpts...,
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, errors.Wrap(context.Background(), err, "list queued writers")
 	}
 	intentOpts := append([]etcdv3.OpOption{etcdv3.WithPrefix(), etcdv3.WithLimit(1)}, opts...)
-	intentResp, err := locker.client.Get(
+	intentResp, err := locker.writer.client.Get(
 		ctx,
 		rwWriterIntentsPrefix(resourceKey),
 		intentOpts...,
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, errors.Wrap(context.Background(), err, "list writer intents")
 	}
 
 	return intentResp, resp, nil
@@ -234,21 +212,15 @@ func (locker *EtcdLocker) hasAnyReader(resourceKey string) (bool, error) {
 
 	resp, err := locker.client.Get(ctx, rwReadersPrefix(resourceKey), etcdv3.WithPrefix(), etcdv3.WithLimit(1))
 	if err != nil {
-		return false, err
+		return false, errors.Wrap(context.Background(), err, "list active readers")
 	}
 
 	return len(resp.Kvs) > 0, nil
 }
 
-func (locker *EtcdRWLocker) scheduleRelease(lock *EtcdRWLock, ttl int) {
-	time.AfterFunc(time.Duration(ttl)*time.Second, func() {
-		_ = lock.Release()
-	})
-}
-
 func (l *EtcdRWLock) Release() error {
 	if l == nil {
-		return errgo.New("nil lock")
+		return errors.New(context.Background(), "nil lock")
 	}
 
 	l.Lock()
@@ -258,15 +230,16 @@ func (l *EtcdRWLock) Release() error {
 		return nil
 	}
 
-	l.released = true
-
 	_, err := l.client.Delete(context.Background(), l.lockKey)
-	closeErr := closeRWSession(l.session)
-
 	if err != nil {
+		return errors.Wrap(context.Background(), err, "delete read lock key")
+	}
+	if err := closeRWSession(l.session); err != nil {
 		return err
 	}
-	return closeErr
+
+	l.released = true
+	return nil
 }
 
 func closeRWSession(session *concurrency.Session) error {
@@ -278,7 +251,7 @@ func closeRWSession(session *concurrency.Session) error {
 	if err == nil || err == rpctypes.ErrLeaseNotFound {
 		return nil
 	}
-	return err
+	return errors.Wrap(context.Background(), err, "close rw lock session")
 }
 
 func rwQueuePrefix(resourceKey string) string {
@@ -286,7 +259,7 @@ func rwQueuePrefix(resourceKey string) string {
 }
 
 func rwReadersPrefix(resourceKey string) string {
-	return fmt.Sprintf("%s/%s/%s/", rwMetadataPrefix, rwReaderDirectory, encodeMetadataResource(resourceKey))
+	return rwMetadataKeyPrefix(resourceKey, rwReaderDirectory)
 }
 
 func rwReaderKey(resourceKey string, leaseID etcdv3.LeaseID) string {
@@ -294,7 +267,7 @@ func rwReaderKey(resourceKey string, leaseID etcdv3.LeaseID) string {
 }
 
 func rwWriterIntentsPrefix(resourceKey string) string {
-	return fmt.Sprintf("%s/%s/%s/", rwMetadataPrefix, rwWriterIntentDirectory, encodeMetadataResource(resourceKey))
+	return rwMetadataKeyPrefix(resourceKey, rwWriterIntentDirectory)
 }
 
 func rwWriterIntentKey(resourceKey string, leaseID etcdv3.LeaseID) string {
@@ -303,12 +276,19 @@ func rwWriterIntentKey(resourceKey string, leaseID etcdv3.LeaseID) string {
 
 func noteAcquireFailure(err error, cleanupErr error, message string) error {
 	if cleanupErr == nil {
-		return errgo.Notef(err, "%s", message)
+		return errors.Wrap(context.Background(), err, message)
 	}
 
-	return errgo.Notef(err, "%s (additionally failed cleanup: %v)", message, cleanupErr)
+	return errors.Wrapf(context.Background(), err, "%s (cleanup: %v)", message, cleanupErr)
 }
 
-func encodeMetadataResource(resourceKey string) string {
+func rwMetadataKeyPrefix(resourceKey string, kind string) string {
+	return fmt.Sprintf("%s/%s/%s/", rwMetadataPrefix, kind, rwMetadataResourceSegment(resourceKey))
+}
+
+func rwMetadataResourceSegment(resourceKey string) string {
+	// A raw resource key cannot be embedded directly in a metadata prefix tree:
+	// "/foo" would become a prefix of "/foo/bar". Encoding keeps each resource
+	// in a single opaque path segment, so prefix scans stay scoped to one lock.
 	return base64.RawURLEncoding.EncodeToString([]byte(resourceKey))
 }

@@ -4,10 +4,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Scalingo/go-utils/errors/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"gopkg.in/errgo.v1"
 )
 
 func TestAcquire(t *testing.T) {
@@ -20,7 +19,8 @@ func TestAcquire(t *testing.T) {
 		assert.NotNil(t, lock)
 		lock, err = locker.Acquire("/lock", 10)
 		require.Error(t, err)
-		assert.IsType(t, &ErrAlreadyLocked{}, errgo.Cause(err))
+		var lockErr *ErrAlreadyLocked
+		assert.True(t, errors.As(err, &lockErr))
 		assert.Nil(t, lock)
 	})
 
@@ -82,7 +82,8 @@ func TestWaitAcquire(t *testing.T) {
 			lock, err := locker.WaitAcquire("/lock-wait-acquire-free", 2)
 			t2 := time.Now()
 
-			assert.IsType(t, &ErrAlreadyLocked{}, errgo.Cause(err))
+			var lockErr *ErrAlreadyLocked
+			assert.True(t, errors.As(err, &lockErr))
 			assert.Nil(t, lock)
 			assert.Equal(t, 1, int(t2.Sub(t1).Seconds()))
 		})
