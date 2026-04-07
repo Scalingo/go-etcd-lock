@@ -2,6 +2,10 @@
 
 ## To be Released
 
+## v5.0.11
+
+* build(deps): various updates
+
 ## v5.0.10
 
 * refactor: replace `github.com/golang/mock` with `go.uber.org/mock`
