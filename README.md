@@ -1,4 +1,4 @@
-# etcd-lock v5.0.10
+# etcd-lock v5.0.11
 
 ## Import
 
@@ -51,7 +51,7 @@ Bump new version number in:
 Commit, tag and create a new release:
 
 ```sh
-version="5.0.10"
+version="5.0.11"
 
 git switch --create release/${version}
 git add CHANGELOG.md README.md
