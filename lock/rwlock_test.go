@@ -325,6 +325,31 @@ func TestRWLockWait(t *testing.T) {
 		assertWaitAround(t, t2.Sub(t1))
 	})
 
+	t.Run("legacy wait stays blocked past its internal ttl while an rw reader is active", func(t *testing.T) {
+		legacyLocker := testLegacyLocker()
+		lock, err := locker.AcquireRead("/rw-wait-past-internal-ttl", 3)
+		require.NoError(t, err)
+		require.NotNil(t, lock)
+
+		// Wait() uses WaitAcquire(..., 1) internally; this confirms the etcd
+		// session keepalive keeps that provisional writer alive beyond one second.
+		done := make(chan error, 1)
+		go func() {
+			done <- legacyLocker.Wait("/rw-wait-past-internal-ttl")
+		}()
+
+		time.Sleep(1500 * time.Millisecond)
+
+		select {
+		case err := <-done:
+			t.Fatalf("wait returned before the reader was released: %v", err)
+		default:
+		}
+
+		require.NoError(t, lock.Release())
+		require.NoError(t, <-done)
+	})
+
 	t.Run("wait blocks until a legacy writer is gone", func(t *testing.T) {
 		legacyLocker := testLegacyLocker()
 		lock, err := legacyLocker.Acquire("/legacy-writer-rw-wait", 1)
