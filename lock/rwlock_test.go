@@ -517,6 +517,36 @@ func waitUntilLegacyWriterQueued(t *testing.T, key string) {
 	t.Fatalf("legacy writer was never observed in queue for key %q", key)
 }
 
+func waitUntilWriterIntentExists(t *testing.T, key string) {
+	t.Helper()
+
+	resourceKey := addPrefix(key)
+	intentPrefix := rwWriterIntentsPrefix(resourceKey)
+	cli := client()
+	defer cli.Close()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := cli.Get(t.Context(), intentPrefix, etcdv3.WithPrefix(), etcdv3.WithLimit(1))
+		require.NoError(t, err)
+		if len(resp.Kvs) > 0 {
+			return
+		}
+
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	t.Fatalf("writer intent was never observed for key %q", key)
+}
+
+func mustRWReadLock(t *testing.T, lock Lock) *EtcdRWLock {
+	t.Helper()
+
+	rwLock, ok := lock.(*EtcdRWLock)
+	require.True(t, ok)
+	return rwLock
+}
+
 func assertAlreadyLocked(t *testing.T, err error) {
 	t.Helper()
 
