@@ -93,12 +93,10 @@ go test ./...
 
 ## Generate mock
 
-From the `/lock/` folder:
+From the repository root:
 
 ```
-mockgen -build_flags=--mod=mod -destination lockmock/locker_mock.go -package lockmock github.com/Scalingo/go-etcd-lock/v5/lock Locker
-mockgen -build_flags=--mod=mod -destination lockmock/gomock_rw_locker.go -package lockmock github.com/Scalingo/go-etcd-lock/v5/lock RWLocker
-mockgen -build_flags=--mod=mod -destination lockmock/lock_mock.go -package lockmock github.com/Scalingo/go-etcd-lock/v5/lock Lock
+gomock_generator
 ```
 ## Release a New Version
 
