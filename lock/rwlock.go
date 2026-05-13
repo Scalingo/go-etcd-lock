@@ -60,11 +60,11 @@ func NewEtcdRWLocker(client *etcdv3.Client, opts ...EtcdLockerOpt) RWLocker {
 }
 
 func (locker *EtcdRWLocker) AcquireRead(key string, ttl int) (Lock, error) {
-	return locker.acquireRead(key, ttl, false)
+	return locker.acquireRead(context.Background(), key, ttl, false)
 }
 
 func (locker *EtcdRWLocker) WaitAcquireRead(key string, ttl int) (Lock, error) {
-	return locker.acquireRead(key, ttl, true)
+	return locker.acquireRead(context.Background(), key, ttl, true)
 }
 
 func (locker *EtcdRWLocker) AcquireWrite(key string, ttl int) (Lock, error) {
@@ -87,8 +87,7 @@ func (locker *EtcdRWLocker) Wait(key string) error {
 //
 // Readers can run concurrently with each other, but they must never jump ahead
 // of a writer that was already visible in the shared ordering.
-func (locker *EtcdRWLocker) acquireRead(key string, ttl int, wait bool) (Lock, error) {
-	ctx := context.Background()
+func (locker *EtcdRWLocker) acquireRead(ctx context.Context, key string, ttl int, wait bool) (Lock, error) {
 	resourceKey := addPrefix(key)
 	deadline := time.Now().Add(locker.writer.maxTryLockTimeout)
 
