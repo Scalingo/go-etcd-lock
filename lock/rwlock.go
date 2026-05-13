@@ -26,6 +26,7 @@ type RWLocker interface {
 	AcquireRead(key string, ttl int) (Lock, error)
 	AcquireReadWithContext(ctx context.Context, key string, ttl int) (Lock, error)
 	WaitAcquireRead(key string, ttl int) (Lock, error)
+	WaitAcquireReadWithContext(ctx context.Context, key string, ttl int) (Lock, error)
 	AcquireWrite(key string, ttl int) (Lock, error)
 	WaitAcquireWrite(key string, ttl int) (Lock, error)
 	Wait(key string) error
@@ -70,6 +71,10 @@ func (locker *EtcdRWLocker) AcquireReadWithContext(ctx context.Context, key stri
 
 func (locker *EtcdRWLocker) WaitAcquireRead(key string, ttl int) (Lock, error) {
 	return locker.acquireRead(context.Background(), key, ttl, true)
+}
+
+func (locker *EtcdRWLocker) WaitAcquireReadWithContext(ctx context.Context, key string, ttl int) (Lock, error) {
+	return locker.acquireRead(ctx, key, ttl, true)
 }
 
 func (locker *EtcdRWLocker) AcquireWrite(key string, ttl int) (Lock, error) {
