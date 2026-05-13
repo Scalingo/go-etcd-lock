@@ -19,6 +19,7 @@ func (e *ErrAlreadyLocked) Error() string {
 
 type Locker interface {
 	Acquire(key string, ttl int) (Lock, error)
+	AcquireWithContext(ctx context.Context, key string, ttl int) (Lock, error)
 	WaitAcquire(key string, ttl int) (Lock, error)
 	Wait(key string) error
 }
@@ -87,6 +88,10 @@ func (locker *EtcdLocker) Acquire(key string, ttl int) (Lock, error) {
 	return locker.acquire(context.Background(), key, ttl, false)
 }
 
+func (locker *EtcdLocker) AcquireWithContext(ctx context.Context, key string, ttl int) (Lock, error) {
+	return locker.acquire(ctx, key, ttl, false)
+}
+
 func (locker *EtcdLocker) WaitAcquire(key string, ttl int) (Lock, error) {
 	return locker.acquire(context.Background(), key, ttl, true)
 }
@@ -99,6 +104,10 @@ func (locker *EtcdLocker) WaitAcquire(key string, ttl int) (Lock, error) {
 // mutex.Lock retries. Once the legacy mutex is acquired, the writer still waits
 // for already-active readers to drain before the lock is considered acquired.
 func (locker *EtcdLocker) acquire(ctx context.Context, key string, ttl int, wait bool) (Lock, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, errors.Wrap(ctx, err, "acquire lock")
+	}
+
 	// A Session is a GRPC connection to ETCD API v3, the connection should be
 	// closed to release resources.
 	session, err := concurrency.NewSession(locker.client, concurrency.WithTTL(ttl))
@@ -122,6 +131,9 @@ func (locker *EtcdLocker) acquire(ctx context.Context, key string, ttl int, wait
 		select {
 		case <-timeout.C:
 			session.Close()
+			if err := ctx.Err(); err != nil {
+				return nil, errors.Wrap(ctx, err, "acquire lock")
+			}
 			if tryLockErr == context.DeadlineExceeded {
 				return nil, &ErrAlreadyLocked{}
 			}
@@ -134,7 +146,10 @@ func (locker *EtcdLocker) acquire(ctx context.Context, key string, ttl int, wait
 			if tryLockErr == nil {
 				intentCreated = true
 			} else {
-				time.Sleep(locker.cooldownTryLockDuration)
+				if err := locker.waitForRetry(ctx); err != nil {
+					session.Close()
+					return nil, errors.Wrap(ctx, err, "acquire lock")
+				}
 				continue
 			}
 		}
@@ -148,12 +163,18 @@ func (locker *EtcdLocker) acquire(ctx context.Context, key string, ttl int, wait
 		shouldWait := wait && tryLockErr == context.DeadlineExceeded
 		shouldRetry := shouldWait || (tryLockErr != nil && tryLockErr != context.DeadlineExceeded)
 		if shouldRetry {
-			time.Sleep(locker.cooldownTryLockDuration)
+			if err := locker.waitForRetry(ctx); err != nil {
+				session.Close()
+				return nil, errors.Wrap(ctx, err, "acquire lock")
+			}
 			continue
 		}
 
 		if !shouldRetry && tryLockErr == context.DeadlineExceeded {
 			session.Close()
+			if err := ctx.Err(); err != nil {
+				return nil, errors.Wrap(ctx, err, "acquire lock")
+			}
 			return nil, &ErrAlreadyLocked{}
 		}
 
@@ -203,6 +224,9 @@ func (locker *EtcdLocker) tryLock(ctx context.Context, mutex *concurrency.Mutex)
 // this wait fails or times out.
 func (locker *EtcdLocker) waitForReaders(ctx context.Context, resourceKey string, wait bool, deadline time.Time) error {
 	for {
+		if err := ctx.Err(); err != nil {
+			return errors.Wrap(ctx, err, "wait for readers")
+		}
 		readersPresent, err := locker.hasAnyReader(ctx, resourceKey)
 		if err != nil {
 			return errors.Wrap(ctx, err, "check current readers")
@@ -213,7 +237,25 @@ func (locker *EtcdLocker) waitForReaders(ctx context.Context, resourceKey string
 		if !wait || time.Now().After(deadline) {
 			return &ErrAlreadyLocked{}
 		}
-		time.Sleep(locker.cooldownTryLockDuration)
+		if err := locker.waitForRetry(ctx); err != nil {
+			return errors.Wrap(ctx, err, "wait for readers")
+		}
+	}
+}
+
+func (locker *EtcdLocker) waitForRetry(ctx context.Context) error {
+	if locker.cooldownTryLockDuration == 0 {
+		return ctx.Err()
+	}
+
+	timer := time.NewTimer(locker.cooldownTryLockDuration)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 

@@ -1,6 +1,8 @@
 package lock
 
 import (
+	"context"
+	stdErrors "errors"
 	"testing"
 	"time"
 
@@ -38,6 +40,52 @@ func TestAcquire(t *testing.T) {
 		lock, err := locker.Acquire("/lock-expire", 1)
 		require.NoError(t, err)
 		require.NoError(t, lock.Release())
+	})
+
+	t.Run("AcquireWithContext should acquire a free lock", func(t *testing.T) {
+		locker := NewEtcdLocker(client(), WithTryLockTimeout(500*time.Millisecond))
+
+		lock, err := locker.AcquireWithContext(context.Background(), "/lock-acquire-context-free", 10)
+
+		require.NoError(t, err)
+		require.NotNil(t, lock)
+		require.NoError(t, lock.Release())
+	})
+
+	t.Run("AcquireWithContext should fail immediately when the context is canceled", func(t *testing.T) {
+		locker := NewEtcdLocker(client(), WithTryLockTimeout(time.Second))
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		t1 := time.Now()
+		lock, err := locker.AcquireWithContext(ctx, "/lock-acquire-context-canceled", 10)
+		t2 := time.Now()
+
+		require.Error(t, err)
+		assert.True(t, stdErrors.Is(err, context.Canceled))
+		assert.Nil(t, lock)
+		assert.Less(t, t2.Sub(t1), 100*time.Millisecond)
+	})
+
+	t.Run("AcquireWithContext should stop when the context deadline is exceeded", func(t *testing.T) {
+		locker := NewEtcdLocker(client(), WithTryLockTimeout(time.Second))
+		firstLock, err := locker.Acquire("/lock-acquire-context-timeout", 10)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, firstLock.Release())
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+
+		t1 := time.Now()
+		lock, err := locker.AcquireWithContext(ctx, "/lock-acquire-context-timeout", 10)
+		t2 := time.Now()
+
+		require.Error(t, err)
+		assert.True(t, stdErrors.Is(err, context.DeadlineExceeded))
+		assert.Nil(t, lock)
+		assert.Less(t, t2.Sub(t1), 500*time.Millisecond)
 	})
 }
 

@@ -5,6 +5,7 @@
 package lockmock
 
 import (
+	context "context"
 	reflect "reflect"
 
 	lock "github.com/Scalingo/go-etcd-lock/v5/lock"
@@ -48,6 +49,21 @@ func (m *MockLocker) Acquire(key string, ttl int) (lock.Lock, error) {
 func (mr *MockLockerMockRecorder) Acquire(key, ttl any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Acquire", reflect.TypeOf((*MockLocker)(nil).Acquire), key, ttl)
+}
+
+// AcquireWithContext mocks base method.
+func (m *MockLocker) AcquireWithContext(ctx context.Context, key string, ttl int) (lock.Lock, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AcquireWithContext", ctx, key, ttl)
+	ret0, _ := ret[0].(lock.Lock)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// AcquireWithContext indicates an expected call of AcquireWithContext.
+func (mr *MockLockerMockRecorder) AcquireWithContext(ctx, key, ttl any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AcquireWithContext", reflect.TypeOf((*MockLocker)(nil).AcquireWithContext), ctx, key, ttl)
 }
 
 // Wait mocks base method.
