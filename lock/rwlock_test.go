@@ -164,6 +164,26 @@ func TestRWLockAcquireWrite(t *testing.T) {
 		assertAlreadyLocked(t, err)
 		assert.Nil(t, writeLock)
 	})
+
+	t.Run("AcquireWriteWithContext fails immediately when the context is canceled", func(t *testing.T) {
+		readLock, err := locker.AcquireRead("/rw-write-context-canceled", 3)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, readLock.Release())
+		})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		t1 := time.Now()
+		writeLock, err := locker.AcquireWriteWithContext(ctx, "/rw-write-context-canceled", 3)
+		t2 := time.Now()
+
+		require.Error(t, err)
+		assert.True(t, stdErrors.Is(err, context.Canceled))
+		assert.Nil(t, writeLock)
+		assert.Less(t, t2.Sub(t1), 100*time.Millisecond)
+	})
 }
 
 func TestRWLockMigration(t *testing.T) {
