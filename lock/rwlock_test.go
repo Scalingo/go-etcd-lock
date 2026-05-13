@@ -1,6 +1,8 @@
 package lock
 
 import (
+	"context"
+	stdErrors "errors"
 	"strings"
 	"sync"
 	"testing"
@@ -55,6 +57,27 @@ func TestRWLockAcquireRead(t *testing.T) {
 		require.Error(t, err)
 		assertAlreadyLocked(t, err)
 		assert.Nil(t, readLock)
+	})
+
+	t.Run("AcquireReadWithContext acquires a free read lock", func(t *testing.T) {
+		readLock, err := locker.AcquireReadWithContext(context.Background(), "/rw-read-context-free", 3)
+		require.NoError(t, err)
+		require.NotNil(t, readLock)
+		require.NoError(t, readLock.Release())
+	})
+
+	t.Run("AcquireReadWithContext fails immediately when the context is canceled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		t1 := time.Now()
+		readLock, err := locker.AcquireReadWithContext(ctx, "/rw-read-context-canceled", 3)
+		t2 := time.Now()
+
+		require.Error(t, err)
+		assert.True(t, stdErrors.Is(err, context.Canceled))
+		assert.Nil(t, readLock)
+		assert.Less(t, t2.Sub(t1), 100*time.Millisecond)
 	})
 }
 

@@ -24,6 +24,7 @@ const rwWriterIntentDirectory = "writer-intents"
 
 type RWLocker interface {
 	AcquireRead(key string, ttl int) (Lock, error)
+	AcquireReadWithContext(ctx context.Context, key string, ttl int) (Lock, error)
 	WaitAcquireRead(key string, ttl int) (Lock, error)
 	AcquireWrite(key string, ttl int) (Lock, error)
 	WaitAcquireWrite(key string, ttl int) (Lock, error)
@@ -63,6 +64,10 @@ func (locker *EtcdRWLocker) AcquireRead(key string, ttl int) (Lock, error) {
 	return locker.acquireRead(context.Background(), key, ttl, false)
 }
 
+func (locker *EtcdRWLocker) AcquireReadWithContext(ctx context.Context, key string, ttl int) (Lock, error) {
+	return locker.acquireRead(ctx, key, ttl, false)
+}
+
 func (locker *EtcdRWLocker) WaitAcquireRead(key string, ttl int) (Lock, error) {
 	return locker.acquireRead(context.Background(), key, ttl, true)
 }
@@ -88,11 +93,19 @@ func (locker *EtcdRWLocker) Wait(key string) error {
 // Readers can run concurrently with each other, but they must never jump ahead
 // of a writer that was already visible in the shared ordering.
 func (locker *EtcdRWLocker) acquireRead(ctx context.Context, key string, ttl int, wait bool) (Lock, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, errors.Wrap(ctx, err, "check context")
+	}
+
 	resourceKey := addPrefix(key)
 	deadline := time.Now().Add(locker.writer.maxTryLockTimeout)
 
 	for {
-		writerPresent, err := locker.hasAnyWriter(resourceKey)
+		if err := ctx.Err(); err != nil {
+			return nil, errors.Wrap(ctx, err, "check context")
+		}
+
+		writerPresent, err := locker.hasAnyWriter(ctx, resourceKey)
 		if err != nil {
 			return nil, errors.Wrap(ctx, err, "check current write lock")
 		}
@@ -100,7 +113,9 @@ func (locker *EtcdRWLocker) acquireRead(ctx context.Context, key string, ttl int
 			if !wait || time.Now().After(deadline) {
 				return nil, &ErrAlreadyLocked{}
 			}
-			time.Sleep(locker.writer.cooldownTryLockDuration)
+			if err := locker.writer.waitForRetry(ctx); err != nil {
+				return nil, errors.Wrap(ctx, err, "wait for retry")
+			}
 			continue
 		}
 
@@ -128,7 +143,7 @@ func (locker *EtcdRWLocker) acquireRead(ctx context.Context, key string, ttl int
 		// earlier legacy writer or RW writer already queued or announced for the
 		// same lock key. If such a writer exists, the reader drops its provisional
 		// entry and retries later.
-		writerAhead, err := locker.hasEarlierWriter(resourceKey, myRev-1)
+		writerAhead, err := locker.hasEarlierWriter(ctx, resourceKey, myRev-1)
 		if err != nil {
 			releaseErr := lock.Release()
 			if releaseErr != nil {
@@ -147,7 +162,9 @@ func (locker *EtcdRWLocker) acquireRead(ctx context.Context, key string, ttl int
 		if !wait || time.Now().After(deadline) {
 			return nil, &ErrAlreadyLocked{}
 		}
-		time.Sleep(locker.writer.cooldownTryLockDuration)
+		if err := locker.writer.waitForRetry(ctx); err != nil {
+			return nil, errors.Wrap(ctx, err, "wait for retry")
+		}
 	}
 }
 
@@ -169,24 +186,24 @@ func (locker *EtcdRWLocker) createReaderKey(ctx context.Context, lockKey string,
 	return resp.Header.Revision, nil
 }
 
-func (locker *EtcdRWLocker) hasEarlierWriter(resourceKey string, maxCreateRev int64) (bool, error) {
+func (locker *EtcdRWLocker) hasEarlierWriter(ctx context.Context, resourceKey string, maxCreateRev int64) (bool, error) {
 	if maxCreateRev <= 0 {
 		return false, nil
 	}
 
-	return locker.hasWriter(resourceKey, etcdv3.WithMaxCreateRev(maxCreateRev))
+	return locker.hasWriter(ctx, resourceKey, etcdv3.WithMaxCreateRev(maxCreateRev))
 }
 
-func (locker *EtcdRWLocker) hasAnyWriter(resourceKey string) (bool, error) {
-	return locker.hasWriter(resourceKey)
+func (locker *EtcdRWLocker) hasAnyWriter(ctx context.Context, resourceKey string) (bool, error) {
+	return locker.hasWriter(ctx, resourceKey)
 }
 
 // Writers are visible in two places:
 //   - the public legacy queue under "<resource>/", shared by legacy and RW writers;
 //   - the private writer-intent tree, used by waiting legacy writers before they
 //     have fully acquired the mutex.
-func (locker *EtcdRWLocker) hasWriter(resourceKey string, opts ...etcdv3.OpOption) (bool, error) {
-	intentResp, resp, err := locker.writerState(resourceKey, opts...)
+func (locker *EtcdRWLocker) hasWriter(ctx context.Context, resourceKey string, opts ...etcdv3.OpOption) (bool, error) {
+	intentResp, resp, err := locker.writerState(ctx, resourceKey, opts...)
 	if err != nil {
 		return false, err
 	}
@@ -197,8 +214,8 @@ func (locker *EtcdRWLocker) hasWriter(resourceKey string, opts ...etcdv3.OpOptio
 	return len(resp.Kvs) > 0, nil
 }
 
-func (locker *EtcdRWLocker) writerState(resourceKey string, opts ...etcdv3.OpOption) (*etcdv3.GetResponse, *etcdv3.GetResponse, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), locker.writer.tryLockTimeout)
+func (locker *EtcdRWLocker) writerState(ctx context.Context, resourceKey string, opts ...etcdv3.OpOption) (*etcdv3.GetResponse, *etcdv3.GetResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, locker.writer.tryLockTimeout)
 	defer cancel()
 
 	queueOpts := append([]etcdv3.OpOption{etcdv3.WithPrefix()}, opts...)
@@ -208,7 +225,7 @@ func (locker *EtcdRWLocker) writerState(resourceKey string, opts ...etcdv3.OpOpt
 		queueOpts...,
 	)
 	if err != nil {
-		return nil, nil, errors.Wrap(context.Background(), err, "list queued writers")
+		return nil, nil, errors.Wrap(ctx, err, "list queued writers")
 	}
 	intentOpts := append([]etcdv3.OpOption{etcdv3.WithPrefix(), etcdv3.WithLimit(1)}, opts...)
 	intentResp, err := locker.writer.client.Get(
@@ -217,7 +234,7 @@ func (locker *EtcdRWLocker) writerState(resourceKey string, opts ...etcdv3.OpOpt
 		intentOpts...,
 	)
 	if err != nil {
-		return nil, nil, errors.Wrap(context.Background(), err, "list writer intents")
+		return nil, nil, errors.Wrap(ctx, err, "list writer intents")
 	}
 
 	return intentResp, resp, nil
