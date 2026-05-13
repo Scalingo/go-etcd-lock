@@ -84,11 +84,11 @@ type EtcdLock struct {
 }
 
 func (locker *EtcdLocker) Acquire(key string, ttl int) (Lock, error) {
-	return locker.acquire(key, ttl, false)
+	return locker.acquire(context.Background(), key, ttl, false)
 }
 
 func (locker *EtcdLocker) WaitAcquire(key string, ttl int) (Lock, error) {
-	return locker.acquire(key, ttl, true)
+	return locker.acquire(context.Background(), key, ttl, true)
 }
 
 // acquire keeps the legacy writer path compatible with RW readers.
@@ -98,9 +98,7 @@ func (locker *EtcdLocker) WaitAcquire(key string, ttl int) (Lock, error) {
 // admitting new readers, so a waiting writer does not lose its place every time
 // mutex.Lock retries. Once the legacy mutex is acquired, the writer still waits
 // for already-active readers to drain before the lock is considered acquired.
-func (locker *EtcdLocker) acquire(key string, ttl int, wait bool) (Lock, error) {
-	ctx := context.Background()
-
+func (locker *EtcdLocker) acquire(ctx context.Context, key string, ttl int, wait bool) (Lock, error) {
 	// A Session is a GRPC connection to ETCD API v3, the connection should be
 	// closed to release resources.
 	session, err := concurrency.NewSession(locker.client, concurrency.WithTTL(ttl))
