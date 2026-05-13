@@ -21,6 +21,7 @@ type Locker interface {
 	Acquire(key string, ttl int) (Lock, error)
 	AcquireWithContext(ctx context.Context, key string, ttl int) (Lock, error)
 	WaitAcquire(key string, ttl int) (Lock, error)
+	WaitAcquireWithContext(ctx context.Context, key string, ttl int) (Lock, error)
 	Wait(key string) error
 }
 
@@ -94,6 +95,10 @@ func (locker *EtcdLocker) AcquireWithContext(ctx context.Context, key string, tt
 
 func (locker *EtcdLocker) WaitAcquire(key string, ttl int) (Lock, error) {
 	return locker.acquire(context.Background(), key, ttl, true)
+}
+
+func (locker *EtcdLocker) WaitAcquireWithContext(ctx context.Context, key string, ttl int) (Lock, error) {
+	return locker.acquire(ctx, key, ttl, true)
 }
 
 // acquire keeps the legacy writer path compatible with RW readers.
