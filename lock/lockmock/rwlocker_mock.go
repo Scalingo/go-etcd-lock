@@ -154,3 +154,18 @@ func (mr *MockRWLockerMockRecorder) WaitAcquireWrite(key, ttl any) *gomock.Call 
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WaitAcquireWrite", reflect.TypeOf((*MockRWLocker)(nil).WaitAcquireWrite), key, ttl)
 }
+
+// WaitAcquireWriteWithContext mocks base method.
+func (m *MockRWLocker) WaitAcquireWriteWithContext(ctx context.Context, key string, ttl int) (lock.Lock, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "WaitAcquireWriteWithContext", ctx, key, ttl)
+	ret0, _ := ret[0].(lock.Lock)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// WaitAcquireWriteWithContext indicates an expected call of WaitAcquireWriteWithContext.
+func (mr *MockRWLockerMockRecorder) WaitAcquireWriteWithContext(ctx, key, ttl any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WaitAcquireWriteWithContext", reflect.TypeOf((*MockRWLocker)(nil).WaitAcquireWriteWithContext), ctx, key, ttl)
+}
