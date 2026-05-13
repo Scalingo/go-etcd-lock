@@ -81,7 +81,7 @@ func (locker *EtcdRWLocker) WaitAcquireReadWithContext(ctx context.Context, key 
 }
 
 func (locker *EtcdRWLocker) AcquireWrite(key string, ttl int) (Lock, error) {
-	return locker.AcquireWriteWithContext(context.Background(), key, ttl)
+	return locker.writer.AcquireWithContext(context.Background(), key, ttl)
 }
 
 func (locker *EtcdRWLocker) AcquireWriteWithContext(ctx context.Context, key string, ttl int) (Lock, error) {
@@ -89,7 +89,7 @@ func (locker *EtcdRWLocker) AcquireWriteWithContext(ctx context.Context, key str
 }
 
 func (locker *EtcdRWLocker) WaitAcquireWrite(key string, ttl int) (Lock, error) {
-	return locker.WaitAcquireWriteWithContext(context.Background(), key, ttl)
+	return locker.writer.WaitAcquireWithContext(context.Background(), key, ttl)
 }
 
 func (locker *EtcdRWLocker) WaitAcquireWriteWithContext(ctx context.Context, key string, ttl int) (Lock, error) {
@@ -97,7 +97,7 @@ func (locker *EtcdRWLocker) WaitAcquireWriteWithContext(ctx context.Context, key
 }
 
 func (locker *EtcdRWLocker) Wait(key string) error {
-	return locker.WaitWithContext(context.Background(), key)
+	return locker.writer.WaitWithContext(context.Background(), key)
 }
 
 func (locker *EtcdRWLocker) WaitWithContext(ctx context.Context, key string) error {
