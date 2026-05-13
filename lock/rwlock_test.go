@@ -474,6 +474,38 @@ func TestRWLockWait(t *testing.T) {
 		require.NoError(t, err)
 		assertWaitAround(t, t2.Sub(t1))
 	})
+
+	t.Run("WaitWithContext fails immediately when the context is canceled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		t1 := time.Now()
+		err := locker.WaitWithContext(ctx, "/rw-wait-context-canceled")
+		t2 := time.Now()
+
+		require.Error(t, err)
+		assert.True(t, stdErrors.Is(err, context.Canceled))
+		assert.Less(t, t2.Sub(t1), 100*time.Millisecond)
+	})
+
+	t.Run("WaitWithContext stops when the context deadline is exceeded", func(t *testing.T) {
+		readLock, err := locker.AcquireRead("/rw-wait-context-timeout", 10)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, readLock.Release())
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+
+		t1 := time.Now()
+		err = locker.WaitWithContext(ctx, "/rw-wait-context-timeout")
+		t2 := time.Now()
+
+		require.Error(t, err)
+		assert.True(t, stdErrors.Is(err, context.DeadlineExceeded))
+		assert.Less(t, t2.Sub(t1), 500*time.Millisecond)
+	})
 }
 
 func TestRWLockTimeouts(t *testing.T) {

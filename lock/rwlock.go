@@ -32,6 +32,7 @@ type RWLocker interface {
 	WaitAcquireWrite(key string, ttl int) (Lock, error)
 	WaitAcquireWriteWithContext(ctx context.Context, key string, ttl int) (Lock, error)
 	Wait(key string) error
+	WaitWithContext(ctx context.Context, key string) error
 }
 
 type EtcdRWLocker struct {
@@ -96,7 +97,11 @@ func (locker *EtcdRWLocker) WaitAcquireWriteWithContext(ctx context.Context, key
 }
 
 func (locker *EtcdRWLocker) Wait(key string) error {
-	return locker.writer.Wait(key)
+	return locker.WaitWithContext(context.Background(), key)
+}
+
+func (locker *EtcdRWLocker) WaitWithContext(ctx context.Context, key string) error {
+	return locker.writer.WaitWithContext(ctx, key)
 }
 
 // acquireRead coordinates with both legacy writers and RW writers:
