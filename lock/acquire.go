@@ -23,6 +23,7 @@ type Locker interface {
 	WaitAcquire(key string, ttl int) (Lock, error)
 	WaitAcquireWithContext(ctx context.Context, key string, ttl int) (Lock, error)
 	Wait(key string) error
+	WaitWithContext(ctx context.Context, key string) error
 }
 
 type EtcdLocker struct {

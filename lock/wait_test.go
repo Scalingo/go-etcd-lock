@@ -1,6 +1,8 @@
 package lock
 
 import (
+	"context"
+	stdErrors "errors"
 	"testing"
 	"time"
 
@@ -31,5 +33,52 @@ func TestWait(t *testing.T) {
 
 		t2 := time.Now()
 		assert.Equal(t, 0, int(t2.Sub(t1).Seconds()))
+	})
+
+	t.Run("WaitWithContext should return directly with an unlocked key and release the lock", func(t *testing.T) {
+		err := locker.WaitWithContext(context.Background(), "/lock-free-wait-context")
+		require.NoError(t, err)
+
+		lock, err := locker.Acquire("/lock-free-wait-context", 1)
+		require.NoError(t, err)
+		require.NoError(t, lock.Release())
+	})
+
+	t.Run("WaitWithContext should fail immediately when the context is canceled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		t1 := time.Now()
+		err := locker.WaitWithContext(ctx, "/lock-wait-context-canceled")
+		t2 := time.Now()
+
+		require.Error(t, err)
+		assert.True(t, stdErrors.Is(err, context.Canceled))
+		assert.Less(t, t2.Sub(t1), 100*time.Millisecond)
+	})
+
+	t.Run("WaitWithContext should stop when the context deadline is exceeded", func(t *testing.T) {
+		locker := NewEtcdLocker(
+			client(),
+			WithTryLockTimeout(time.Second),
+			WithMaxTryLockTimeout(5*time.Second),
+			WithCooldownTryLockDuration(10*time.Millisecond),
+		)
+		firstLock, err := locker.Acquire("/lock-wait-context-timeout", 10)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, firstLock.Release())
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+
+		t1 := time.Now()
+		err = locker.WaitWithContext(ctx, "/lock-wait-context-timeout")
+		t2 := time.Now()
+
+		require.Error(t, err)
+		assert.True(t, stdErrors.Is(err, context.DeadlineExceeded))
+		assert.Less(t, t2.Sub(t1), 500*time.Millisecond)
 	})
 }
