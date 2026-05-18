@@ -2,6 +2,10 @@
 
 ## To be Released
 
+## v5.1.0
+
+* feat: add read-write locks and context-aware lock APIs
+
 ## v5.0.11
 
 * build(deps): various updates
