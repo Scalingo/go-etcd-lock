@@ -2,7 +2,6 @@ package lock
 
 import (
 	"context"
-	stdErrors "errors"
 	"testing"
 	"time"
 
@@ -36,7 +35,7 @@ func TestWait(t *testing.T) {
 	})
 
 	t.Run("WaitWithContext should return directly with an unlocked key and release the lock", func(t *testing.T) {
-		err := locker.WaitWithContext(context.Background(), "/lock-free-wait-context")
+		err := locker.WaitWithContext(t.Context(), "/lock-free-wait-context")
 		require.NoError(t, err)
 
 		lock, err := locker.Acquire("/lock-free-wait-context", 1)
@@ -45,7 +44,7 @@ func TestWait(t *testing.T) {
 	})
 
 	t.Run("WaitWithContext should fail immediately when the context is canceled", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 
 		t1 := time.Now()
@@ -53,7 +52,7 @@ func TestWait(t *testing.T) {
 		t2 := time.Now()
 
 		require.Error(t, err)
-		assert.True(t, stdErrors.Is(err, context.Canceled))
+		require.ErrorIs(t, err, context.Canceled)
 		assert.Less(t, t2.Sub(t1), 100*time.Millisecond)
 	})
 
@@ -70,7 +69,7 @@ func TestWait(t *testing.T) {
 			require.NoError(t, firstLock.Release())
 		})
 
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 		defer cancel()
 
 		t1 := time.Now()
@@ -78,7 +77,7 @@ func TestWait(t *testing.T) {
 		t2 := time.Now()
 
 		require.Error(t, err)
-		assert.True(t, stdErrors.Is(err, context.DeadlineExceeded))
+		require.ErrorIs(t, err, context.DeadlineExceeded)
 		assert.Less(t, t2.Sub(t1), 500*time.Millisecond)
 	})
 }

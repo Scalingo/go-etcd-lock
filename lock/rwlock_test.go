@@ -2,7 +2,6 @@ package lock
 
 import (
 	"context"
-	stdErrors "errors"
 	"strings"
 	"sync"
 	"testing"
@@ -60,14 +59,14 @@ func TestRWLockAcquireRead(t *testing.T) {
 	})
 
 	t.Run("AcquireReadWithContext acquires a free read lock", func(t *testing.T) {
-		readLock, err := locker.AcquireReadWithContext(context.Background(), "/rw-read-context-free", 3)
+		readLock, err := locker.AcquireReadWithContext(t.Context(), "/rw-read-context-free", 3)
 		require.NoError(t, err)
 		require.NotNil(t, readLock)
 		require.NoError(t, readLock.Release())
 	})
 
 	t.Run("AcquireReadWithContext fails immediately when the context is canceled", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 
 		t1 := time.Now()
@@ -75,13 +74,13 @@ func TestRWLockAcquireRead(t *testing.T) {
 		t2 := time.Now()
 
 		require.Error(t, err)
-		assert.True(t, stdErrors.Is(err, context.Canceled))
+		require.ErrorIs(t, err, context.Canceled)
 		assert.Nil(t, readLock)
 		assert.Less(t, t2.Sub(t1), 100*time.Millisecond)
 	})
 
 	t.Run("WaitAcquireReadWithContext fails immediately when the context is canceled", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 
 		t1 := time.Now()
@@ -89,7 +88,7 @@ func TestRWLockAcquireRead(t *testing.T) {
 		t2 := time.Now()
 
 		require.Error(t, err)
-		assert.True(t, stdErrors.Is(err, context.Canceled))
+		require.ErrorIs(t, err, context.Canceled)
 		assert.Nil(t, readLock)
 		assert.Less(t, t2.Sub(t1), 100*time.Millisecond)
 	})
@@ -101,7 +100,7 @@ func TestRWLockAcquireRead(t *testing.T) {
 			require.NoError(t, lock.Release())
 		})
 
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 		defer cancel()
 
 		t1 := time.Now()
@@ -109,7 +108,7 @@ func TestRWLockAcquireRead(t *testing.T) {
 		t2 := time.Now()
 
 		require.Error(t, err)
-		assert.True(t, stdErrors.Is(err, context.DeadlineExceeded))
+		require.ErrorIs(t, err, context.DeadlineExceeded)
 		assert.Nil(t, readLock)
 		assert.Less(t, t2.Sub(t1), 500*time.Millisecond)
 	})
@@ -172,7 +171,7 @@ func TestRWLockAcquireWrite(t *testing.T) {
 			require.NoError(t, readLock.Release())
 		})
 
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 
 		t1 := time.Now()
@@ -180,13 +179,13 @@ func TestRWLockAcquireWrite(t *testing.T) {
 		t2 := time.Now()
 
 		require.Error(t, err)
-		assert.True(t, stdErrors.Is(err, context.Canceled))
+		require.ErrorIs(t, err, context.Canceled)
 		assert.Nil(t, writeLock)
 		assert.Less(t, t2.Sub(t1), 100*time.Millisecond)
 	})
 
 	t.Run("WaitAcquireWriteWithContext fails immediately when the context is canceled", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 
 		t1 := time.Now()
@@ -194,7 +193,7 @@ func TestRWLockAcquireWrite(t *testing.T) {
 		t2 := time.Now()
 
 		require.Error(t, err)
-		assert.True(t, stdErrors.Is(err, context.Canceled))
+		require.ErrorIs(t, err, context.Canceled)
 		assert.Nil(t, writeLock)
 		assert.Less(t, t2.Sub(t1), 100*time.Millisecond)
 	})
@@ -206,7 +205,7 @@ func TestRWLockAcquireWrite(t *testing.T) {
 			require.NoError(t, readLock.Release())
 		})
 
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 		defer cancel()
 
 		t1 := time.Now()
@@ -214,7 +213,7 @@ func TestRWLockAcquireWrite(t *testing.T) {
 		t2 := time.Now()
 
 		require.Error(t, err)
-		assert.True(t, stdErrors.Is(err, context.DeadlineExceeded))
+		require.ErrorIs(t, err, context.DeadlineExceeded)
 		assert.Nil(t, writeLock)
 		assert.Less(t, t2.Sub(t1), 500*time.Millisecond)
 	})
@@ -476,7 +475,7 @@ func TestRWLockWait(t *testing.T) {
 	})
 
 	t.Run("WaitWithContext fails immediately when the context is canceled", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 
 		t1 := time.Now()
@@ -484,7 +483,7 @@ func TestRWLockWait(t *testing.T) {
 		t2 := time.Now()
 
 		require.Error(t, err)
-		assert.True(t, stdErrors.Is(err, context.Canceled))
+		require.ErrorIs(t, err, context.Canceled)
 		assert.Less(t, t2.Sub(t1), 100*time.Millisecond)
 	})
 
@@ -495,7 +494,7 @@ func TestRWLockWait(t *testing.T) {
 			require.NoError(t, readLock.Release())
 		})
 
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 		defer cancel()
 
 		t1 := time.Now()
@@ -503,7 +502,7 @@ func TestRWLockWait(t *testing.T) {
 		t2 := time.Now()
 
 		require.Error(t, err)
-		assert.True(t, stdErrors.Is(err, context.DeadlineExceeded))
+		require.ErrorIs(t, err, context.DeadlineExceeded)
 		assert.Less(t, t2.Sub(t1), 500*time.Millisecond)
 	})
 }

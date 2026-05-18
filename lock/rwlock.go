@@ -113,7 +113,8 @@ func (locker *EtcdRWLocker) WaitWithContext(ctx context.Context, key string) err
 // Readers can run concurrently with each other, but they must never jump ahead
 // of a writer that was already visible in the shared ordering.
 func (locker *EtcdRWLocker) acquireRead(ctx context.Context, key string, ttl int, wait bool) (Lock, error) {
-	if err := ctx.Err(); err != nil {
+	err := ctx.Err()
+	if err != nil {
 		return nil, errors.Wrap(ctx, err, "check context")
 	}
 
@@ -121,7 +122,8 @@ func (locker *EtcdRWLocker) acquireRead(ctx context.Context, key string, ttl int
 	deadline := time.Now().Add(locker.writer.maxTryLockTimeout)
 
 	for {
-		if err := ctx.Err(); err != nil {
+		err = ctx.Err()
+		if err != nil {
 			return nil, errors.Wrap(ctx, err, "check context")
 		}
 
@@ -133,7 +135,8 @@ func (locker *EtcdRWLocker) acquireRead(ctx context.Context, key string, ttl int
 			if !wait || time.Now().After(deadline) {
 				return nil, &ErrAlreadyLocked{}
 			}
-			if err := locker.writer.waitForRetry(ctx); err != nil {
+			err = locker.writer.waitForRetry(ctx)
+			if err != nil {
 				return nil, errors.Wrap(ctx, err, "wait for retry")
 			}
 			continue
@@ -152,6 +155,7 @@ func (locker *EtcdRWLocker) acquireRead(ctx context.Context, key string, ttl int
 		}
 		myRev, err := locker.createReaderKey(ctx, lock.lockKey, session.Lease())
 		if err != nil {
+			//nolint:contextcheck // Session cleanup uses the existing non-context helper.
 			closeErr := closeRWSession(session)
 			if closeErr != nil {
 				return nil, errors.Wrapf(ctx, err, "acquire read lock: create reader key (cleanup: %v)", closeErr)
@@ -165,6 +169,7 @@ func (locker *EtcdRWLocker) acquireRead(ctx context.Context, key string, ttl int
 		// entry and retries later.
 		writerAhead, err := locker.hasEarlierWriter(ctx, resourceKey, myRev-1)
 		if err != nil {
+			//nolint:contextcheck // Lock cleanup uses the existing non-context Release API.
 			releaseErr := lock.Release()
 			if releaseErr != nil {
 				return nil, errors.Wrapf(ctx, err, "acquire read lock: check earlier writer (cleanup: %v)", releaseErr)
@@ -175,6 +180,7 @@ func (locker *EtcdRWLocker) acquireRead(ctx context.Context, key string, ttl int
 			scheduleRelease(lock, ttl)
 			return lock, nil
 		}
+		//nolint:contextcheck // Lock cleanup uses the existing non-context Release API.
 		releaseErr := lock.Release()
 		if releaseErr != nil {
 			return nil, errors.Wrapf(ctx, &ErrAlreadyLocked{}, "release lock (cleanup: %v)", releaseErr)
@@ -182,7 +188,8 @@ func (locker *EtcdRWLocker) acquireRead(ctx context.Context, key string, ttl int
 		if !wait || time.Now().After(deadline) {
 			return nil, &ErrAlreadyLocked{}
 		}
-		if err := locker.writer.waitForRetry(ctx); err != nil {
+		err = locker.writer.waitForRetry(ctx)
+		if err != nil {
 			return nil, errors.Wrap(ctx, err, "wait for retry")
 		}
 	}

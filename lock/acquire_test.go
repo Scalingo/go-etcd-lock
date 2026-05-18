@@ -2,7 +2,6 @@ package lock
 
 import (
 	"context"
-	stdErrors "errors"
 	"testing"
 	"time"
 
@@ -45,7 +44,7 @@ func TestAcquire(t *testing.T) {
 	t.Run("AcquireWithContext should acquire a free lock", func(t *testing.T) {
 		locker := NewEtcdLocker(client(), WithTryLockTimeout(500*time.Millisecond))
 
-		lock, err := locker.AcquireWithContext(context.Background(), "/lock-acquire-context-free", 10)
+		lock, err := locker.AcquireWithContext(t.Context(), "/lock-acquire-context-free", 10)
 
 		require.NoError(t, err)
 		require.NotNil(t, lock)
@@ -54,7 +53,7 @@ func TestAcquire(t *testing.T) {
 
 	t.Run("AcquireWithContext should fail immediately when the context is canceled", func(t *testing.T) {
 		locker := NewEtcdLocker(client(), WithTryLockTimeout(time.Second))
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 
 		t1 := time.Now()
@@ -62,7 +61,7 @@ func TestAcquire(t *testing.T) {
 		t2 := time.Now()
 
 		require.Error(t, err)
-		assert.True(t, stdErrors.Is(err, context.Canceled))
+		require.ErrorIs(t, err, context.Canceled)
 		assert.Nil(t, lock)
 		assert.Less(t, t2.Sub(t1), 100*time.Millisecond)
 	})
@@ -75,7 +74,7 @@ func TestAcquire(t *testing.T) {
 			require.NoError(t, firstLock.Release())
 		})
 
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 		defer cancel()
 
 		t1 := time.Now()
@@ -83,7 +82,7 @@ func TestAcquire(t *testing.T) {
 		t2 := time.Now()
 
 		require.Error(t, err)
-		assert.True(t, stdErrors.Is(err, context.DeadlineExceeded))
+		require.ErrorIs(t, err, context.DeadlineExceeded)
 		assert.Nil(t, lock)
 		assert.Less(t, t2.Sub(t1), 500*time.Millisecond)
 	})
@@ -191,7 +190,7 @@ func TestWaitAcquire(t *testing.T) {
 
 	t.Run("WaitAcquireWithContext should fail immediately when the context is canceled", func(t *testing.T) {
 		locker := NewEtcdLocker(client(), WithTryLockTimeout(time.Second))
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 
 		t1 := time.Now()
@@ -199,7 +198,7 @@ func TestWaitAcquire(t *testing.T) {
 		t2 := time.Now()
 
 		require.Error(t, err)
-		assert.True(t, stdErrors.Is(err, context.Canceled))
+		require.ErrorIs(t, err, context.Canceled)
 		assert.Nil(t, lock)
 		assert.Less(t, t2.Sub(t1), 100*time.Millisecond)
 	})
@@ -217,7 +216,7 @@ func TestWaitAcquire(t *testing.T) {
 			require.NoError(t, firstLock.Release())
 		})
 
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 		defer cancel()
 
 		t1 := time.Now()
@@ -225,7 +224,7 @@ func TestWaitAcquire(t *testing.T) {
 		t2 := time.Now()
 
 		require.Error(t, err)
-		assert.True(t, stdErrors.Is(err, context.DeadlineExceeded))
+		require.ErrorIs(t, err, context.DeadlineExceeded)
 		assert.Nil(t, lock)
 		assert.Less(t, t2.Sub(t1), 500*time.Millisecond)
 	})
