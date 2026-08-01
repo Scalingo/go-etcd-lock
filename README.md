@@ -83,6 +83,63 @@ if err != nil {
 defer writeLock.Release()
 ```
 
+## Read to Write Upgrade
+
+If you acquire a read lock and later decide the resource must be changed, you can upgrade that read lock to a write lock with `(*lock.EtcdRWLock).Upgrade()` or `WaitUpgrade()`.
+
+The upgrade is not atomic:
+- writer intent is published first, so later readers stop entering
+- the read lock is released
+- the code then acquires the write lock
+
+Because of that gap, you must re-read or re-validate the protected resource once the write lock has been granted, before applying any mutation such as repairing network state, updating configuration, or creating/deleting a dependent resource.
+
+```mermaid
+sequenceDiagram
+    participant C as Caller
+    participant R as RW read lock
+    participant E as etcd queue
+    participant W as Other readers/writers
+
+    C->>R: AcquireRead()
+    R->>E: register reader entry
+    C->>C: inspect resource state
+
+    alt resource must be updated
+        C->>R: WaitUpgrade()
+        R->>E: publish writer intent
+        R->>E: remove reader entry
+        Note over W,E: New readers stop entering
+        W-->>E: existing readers/writers drain
+        R->>E: acquire legacy write lock
+        E-->>C: write lock granted
+        C->>C: re-read / re-validate resource
+        C->>C: apply mutation
+    end
+```
+
+```go
+readLock, err := locker.AcquireRead("/network", 60)
+if err != nil {
+	panic(err)
+}
+
+rwReadLock, ok := readLock.(*lock.EtcdRWLock)
+if !ok {
+	panic("unexpected lock type")
+}
+
+// Read and validate the resource first.
+// If it needs to be updated, upgrade to a write lock.
+writeLock, err := rwReadLock.WaitUpgrade()
+if err != nil {
+	panic(err)
+}
+defer writeLock.Release()
+
+// Re-read or re-validate here before applying the update.
+```
+
 ## Testing
 
 You need a etcd instance running on `localhost:2379`, then:
