@@ -45,22 +45,13 @@ type EtcdRWLock struct {
 	client   *etcdv3.Client
 	session  *concurrency.Session
 	lockKey  string
+	metrics  *lockMetrics
 	released bool
 }
 
 func NewEtcdRWLocker(client *etcdv3.Client, opts ...EtcdLockerOpt) RWLocker {
-	writer := &EtcdLocker{
-		client:                  client,
-		tryLockTimeout:          30 * time.Second,
-		maxTryLockTimeout:       2 * time.Minute,
-		cooldownTryLockDuration: time.Second,
-	}
-	for _, opt := range opts {
-		opt(writer)
-	}
-
 	return &EtcdRWLocker{
-		writer: writer,
+		writer: newEtcdLocker(client, opts...),
 	}
 }
 
@@ -104,7 +95,18 @@ func (locker *EtcdRWLocker) WaitWithContext(ctx context.Context, key string) err
 	return locker.writer.WaitWithContext(ctx, key)
 }
 
-// acquireRead coordinates with both legacy writers and RW writers:
+func (locker *EtcdRWLocker) acquireRead(ctx context.Context, key string, ttl int, wait bool) (Lock, error) {
+	started := time.Now()
+	result, resultErr := locker.acquireReadLock(ctx, key, ttl, wait)
+	metricResult := acquireResult(resultErr)
+	locker.writer.metrics.recordAcquire(ctx, readLock, wait, metricResult, time.Since(started))
+	if metricResult == acquiredResult {
+		scheduleRelease(ctx, result, ttl)
+	}
+	return result, resultErr
+}
+
+// acquireReadLock coordinates with both legacy writers and RW writers:
 // 1. check whether a writer is already active or queued for this resource;
 // 2. create a leased reader entry in the private RW metadata tree;
 // 3. compare that reader revision with existing writers;
@@ -112,7 +114,7 @@ func (locker *EtcdRWLocker) WaitWithContext(ctx context.Context, key string) err
 //
 // Readers can run concurrently with each other, but they must never jump ahead
 // of a writer that was already visible in the shared ordering.
-func (locker *EtcdRWLocker) acquireRead(ctx context.Context, key string, ttl int, wait bool) (Lock, error) {
+func (locker *EtcdRWLocker) acquireReadLock(ctx context.Context, key string, ttl int, wait bool) (Lock, error) {
 	err := ctx.Err()
 	if err != nil {
 		return nil, errors.Wrap(ctx, err, "check context")
@@ -177,7 +179,7 @@ func (locker *EtcdRWLocker) acquireRead(ctx context.Context, key string, ttl int
 			return nil, errors.Wrap(ctx, err, "acquire read lock: check earlier writer")
 		}
 		if !writerAhead {
-			scheduleRelease(lock, ttl)
+			lock.metrics = locker.writer.metrics
 			return lock, nil
 		}
 		//nolint:contextcheck // Lock cleanup uses the existing non-context Release API.
@@ -285,27 +287,42 @@ func (locker *EtcdLocker) hasAnyReader(ctx context.Context, resourceKey string) 
 }
 
 func (l *EtcdRWLock) Release() error {
+	return l.release(context.Background(), manualRelease)
+}
+
+func (l *EtcdRWLock) release(ctx context.Context, origin releaseOrigin) (resultErr error) {
 	if l == nil {
 		panic("nil rw lock")
 	}
 
 	l.Lock()
 	defer l.Unlock()
+	if origin == ttlRelease && l.released {
+		return nil
+	}
+	released := false
+	defer func() {
+		result := okResult
+		if resultErr != nil {
+			result = errorResult
+		}
+		l.metrics.recordRelease(ctx, readLock, result, released)
+	}()
 
 	if l.released {
 		return nil
 	}
 
-	_, err := l.client.Delete(context.Background(), l.lockKey)
+	_, err := l.client.Delete(ctx, l.lockKey)
 	if err != nil {
-		return errors.Wrap(context.Background(), err, "delete read lock key")
+		return errors.Wrap(ctx, err, "delete read lock key")
 	}
+	l.released = true
+	released = true
 	err = closeRWSession(l.session)
 	if err != nil {
 		return err
 	}
-
-	l.released = true
 	return nil
 }
 
