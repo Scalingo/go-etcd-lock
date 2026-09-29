@@ -38,11 +38,16 @@ type EtcdLocker struct {
 	// cooldownTryLockDuration is the duration between attempt to take the lock when
 	// waiting to take the lock
 	cooldownTryLockDuration time.Duration
+	metrics                 *lockMetrics
 }
 
 type EtcdLockerOpt func(locker *EtcdLocker)
 
 func NewEtcdLocker(client *etcdv3.Client, opts ...EtcdLockerOpt) Locker {
+	return newEtcdLocker(client, opts...)
+}
+
+func newEtcdLocker(client *etcdv3.Client, opts ...EtcdLockerOpt) *EtcdLocker {
 	locker := &EtcdLocker{
 		client:                  client,
 		tryLockTimeout:          30 * time.Second,
@@ -52,6 +57,7 @@ func NewEtcdLocker(client *etcdv3.Client, opts ...EtcdLockerOpt) Locker {
 	for _, opt := range opts {
 		opt(locker)
 	}
+	locker.metrics = initMetrics()
 	return locker
 }
 
@@ -84,6 +90,8 @@ type EtcdLock struct {
 	mutex     *concurrency.Mutex
 	session   *concurrency.Session
 	intentKey string
+	metrics   *lockMetrics
+	released  bool
 }
 
 func (locker *EtcdLocker) Acquire(key string, ttl int) (Lock, error) {
@@ -102,14 +110,25 @@ func (locker *EtcdLocker) WaitAcquireWithContext(ctx context.Context, key string
 	return locker.acquire(ctx, key, ttl, true)
 }
 
-// acquire keeps the legacy writer path compatible with RW readers.
+func (locker *EtcdLocker) acquire(ctx context.Context, key string, ttl int, wait bool) (Lock, error) {
+	started := time.Now()
+	result, resultErr := locker.acquireLock(ctx, key, ttl, wait)
+	metricResult := acquireResult(resultErr)
+	locker.metrics.recordAcquire(ctx, writeLock, wait, metricResult, time.Since(started))
+	if metricResult == acquiredResult {
+		scheduleRelease(ctx, result, ttl)
+	}
+	return result, resultErr
+}
+
+// acquireLock keeps the legacy writer path compatible with RW readers.
 //
 // In waiting mode, a writer first publishes a private intent key and keeps that
 // same identity for the full wait window. RW readers consult that intent before
 // admitting new readers, so a waiting writer does not lose its place every time
 // mutex.Lock retries. Once the legacy mutex is acquired, the writer still waits
 // for already-active readers to drain before the lock is considered acquired.
-func (locker *EtcdLocker) acquire(ctx context.Context, key string, ttl int, wait bool) (Lock, error) {
+func (locker *EtcdLocker) acquireLock(ctx context.Context, key string, ttl int, wait bool) (Lock, error) {
 	err := ctx.Err()
 	if err != nil {
 		return nil, errors.Wrap(ctx, err, "acquire lock")
@@ -137,7 +156,7 @@ func (locker *EtcdLocker) acquire(ctx context.Context, key string, ttl int, wait
 		// consider the lock already taken.
 		select {
 		case <-timeout.C:
-			session.Close()
+			_ = session.Close()
 			err = ctx.Err()
 			if err != nil {
 				return nil, errors.Wrap(ctx, err, "acquire lock")
@@ -156,7 +175,7 @@ func (locker *EtcdLocker) acquire(ctx context.Context, key string, ttl int, wait
 			} else {
 				err = locker.waitForRetry(ctx)
 				if err != nil {
-					session.Close()
+					_ = session.Close()
 					return nil, errors.Wrap(ctx, err, "acquire lock")
 				}
 				continue
@@ -174,14 +193,14 @@ func (locker *EtcdLocker) acquire(ctx context.Context, key string, ttl int, wait
 		if shouldRetry {
 			err = locker.waitForRetry(ctx)
 			if err != nil {
-				session.Close()
+				_ = session.Close()
 				return nil, errors.Wrap(ctx, err, "acquire lock")
 			}
 			continue
 		}
 
 		if !shouldRetry && tryLockErr == context.DeadlineExceeded {
-			session.Close()
+			_ = session.Close()
 			err = ctx.Err()
 			if err != nil {
 				return nil, errors.Wrap(ctx, err, "acquire lock")
@@ -220,7 +239,7 @@ func (locker *EtcdLocker) acquire(ctx context.Context, key string, ttl int, wait
 		return nil, errors.Wrap(ctx, err, "acquire lock")
 	}
 
-	scheduleRelease(lock, ttl)
+	lock.metrics = locker.metrics
 
 	return lock, nil
 }

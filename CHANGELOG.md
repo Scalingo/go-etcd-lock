@@ -2,6 +2,8 @@
 
 ## To be Released
 
+* feat: add OpenTelemetry acquisition, release, duration, and held-lock metrics
+
 ## v5.1.0
 
 * feat: add read-write locks and context-aware lock APIs
