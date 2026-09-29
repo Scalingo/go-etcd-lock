@@ -83,6 +83,28 @@ if err != nil {
 defer writeLock.Release()
 ```
 
+## OpenTelemetry metrics
+
+The library records lock metrics through the OpenTelemetry Go metrics API. Initialize a meter provider in your application before acquiring locks, for example with `github.com/Scalingo/go-utils/otel.Init`:
+
+```go
+shutdown := otel.Init(ctx) // github.com/Scalingo/go-utils/otel
+defer shutdown()
+
+locker := lock.NewEtcdLocker(client)
+```
+
+If the application never calls `otel.Init()` from `go-utils/otel` (or otherwise installs a global meter provider), metrics are silently ignored.
+
+| Metric | Type | Attributes | Meaning |
+| --- | --- | --- | --- |
+| `etcd_lock.acquire.count` | Int64Counter | `lock.type`, `lock.wait`, `lock.result` | Acquisition attempts. |
+| `etcd_lock.release.count` | Int64Counter | `lock.type`, `lock.result` | Release attempts, including failures. |
+| `etcd_lock.acquire.duration` | Float64Histogram, seconds | `lock.type`, `lock.wait`, `lock.result` | Time from an acquisition call to its success or failure, including retries and reader waits. |
+| `etcd_lock.held` | Int64UpDownCounter | `lock.type` | Locks currently held by this process. |
+
+`lock.type` is `read` or `write`; `lock.wait` is a boolean. Acquisition results are `acquired`, `already_locked`, or `error`. Release results are `ok` or `error`. The lock key is never recorded as an attribute, so the number of metric series does not grow with the number of distinct keys.
+
 ## Testing
 
 You need a etcd instance running on `localhost:2379`, then:
