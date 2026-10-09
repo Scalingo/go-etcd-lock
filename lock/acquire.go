@@ -38,11 +38,16 @@ type EtcdLocker struct {
 	// cooldownTryLockDuration is the duration between attempt to take the lock when
 	// waiting to take the lock
 	cooldownTryLockDuration time.Duration
+	metrics                 *lockMetrics
 }
 
 type EtcdLockerOpt func(locker *EtcdLocker)
 
 func NewEtcdLocker(client *etcdv3.Client, opts ...EtcdLockerOpt) Locker {
+	return newEtcdLocker(client, opts...)
+}
+
+func newEtcdLocker(client *etcdv3.Client, opts ...EtcdLockerOpt) *EtcdLocker {
 	locker := &EtcdLocker{
 		client:                  client,
 		tryLockTimeout:          30 * time.Second,
@@ -84,6 +89,7 @@ type EtcdLock struct {
 	mutex     *concurrency.Mutex
 	session   *concurrency.Session
 	intentKey string
+	metrics   *lockMetrics
 }
 
 func (locker *EtcdLocker) Acquire(key string, ttl int) (Lock, error) {
@@ -110,6 +116,7 @@ func (locker *EtcdLocker) WaitAcquireWithContext(ctx context.Context, key string
 // mutex.Lock retries. Once the legacy mutex is acquired, the writer still waits
 // for already-active readers to drain before the lock is considered acquired.
 func (locker *EtcdLocker) acquire(ctx context.Context, key string, ttl int, wait bool) (Lock, error) {
+	started := time.Now()
 	err := ctx.Err()
 	if err != nil {
 		return nil, errors.Wrap(ctx, err, "acquire lock")
@@ -137,7 +144,7 @@ func (locker *EtcdLocker) acquire(ctx context.Context, key string, ttl int, wait
 		// consider the lock already taken.
 		select {
 		case <-timeout.C:
-			session.Close()
+			_ = session.Close()
 			err = ctx.Err()
 			if err != nil {
 				return nil, errors.Wrap(ctx, err, "acquire lock")
@@ -156,7 +163,7 @@ func (locker *EtcdLocker) acquire(ctx context.Context, key string, ttl int, wait
 			} else {
 				err = locker.waitForRetry(ctx)
 				if err != nil {
-					session.Close()
+					_ = session.Close()
 					return nil, errors.Wrap(ctx, err, "acquire lock")
 				}
 				continue
@@ -174,14 +181,14 @@ func (locker *EtcdLocker) acquire(ctx context.Context, key string, ttl int, wait
 		if shouldRetry {
 			err = locker.waitForRetry(ctx)
 			if err != nil {
-				session.Close()
+				_ = session.Close()
 				return nil, errors.Wrap(ctx, err, "acquire lock")
 			}
 			continue
 		}
 
 		if !shouldRetry && tryLockErr == context.DeadlineExceeded {
-			session.Close()
+			_ = session.Close()
 			err = ctx.Err()
 			if err != nil {
 				return nil, errors.Wrap(ctx, err, "acquire lock")
@@ -220,6 +227,8 @@ func (locker *EtcdLocker) acquire(ctx context.Context, key string, ttl int, wait
 		return nil, errors.Wrap(ctx, err, "acquire lock")
 	}
 
+	lock.metrics = locker.metrics
+	locker.metrics.recordAcquire(ctx, writeLock, time.Since(started))
 	scheduleRelease(lock, ttl)
 
 	return lock, nil
