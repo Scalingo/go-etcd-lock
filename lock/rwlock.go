@@ -45,6 +45,7 @@ type EtcdRWLock struct {
 	client   *etcdv3.Client
 	session  *concurrency.Session
 	lockKey  string
+	metrics  *lockMetrics
 	released bool
 }
 
@@ -113,6 +114,7 @@ func (locker *EtcdRWLocker) WaitWithContext(ctx context.Context, key string) err
 // Readers can run concurrently with each other, but they must never jump ahead
 // of a writer that was already visible in the shared ordering.
 func (locker *EtcdRWLocker) acquireRead(ctx context.Context, key string, ttl int, wait bool) (Lock, error) {
+	started := time.Now()
 	err := ctx.Err()
 	if err != nil {
 		return nil, errors.Wrap(ctx, err, "check context")
@@ -177,6 +179,8 @@ func (locker *EtcdRWLocker) acquireRead(ctx context.Context, key string, ttl int
 			return nil, errors.Wrap(ctx, err, "acquire read lock: check earlier writer")
 		}
 		if !writerAhead {
+			lock.metrics = locker.writer.metrics
+			locker.writer.metrics.recordAcquire(ctx, readLock, time.Since(started))
 			scheduleRelease(lock, ttl)
 			return lock, nil
 		}
@@ -300,6 +304,7 @@ func (l *EtcdRWLock) Release() error {
 	if err != nil {
 		return errors.Wrap(context.Background(), err, "delete read lock key")
 	}
+	l.metrics.recordRelease(context.Background(), readLock)
 	err = closeRWSession(l.session)
 	if err != nil {
 		return err
