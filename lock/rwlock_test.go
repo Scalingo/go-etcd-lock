@@ -600,7 +600,7 @@ func TestRWLockRelease(t *testing.T) {
 
 	t.Run("failed release does not mark the read lock as released", func(t *testing.T) {
 		cli := client()
-		cli.Close()
+		_ = cli.Close()
 
 		lock := &EtcdRWLock{
 			Mutex:   &sync.Mutex{},
@@ -641,7 +641,7 @@ func waitUntilLegacyWriterQueued(t *testing.T, key string) {
 	queuePrefix := rwQueuePrefix(resourceKey)
 	readerPrefix := rwReadersPrefix(resourceKey)
 	cli := client()
-	defer cli.Close()
+	defer func() { _ = cli.Close() }()
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {

@@ -12,7 +12,7 @@ func init() {
 	if err != nil {
 		log.Fatalln("etcd is not running on localhost", err)
 	}
-	s.Close()
+	_ = s.Close()
 }
 
 func client() *etcdv3.Client {
