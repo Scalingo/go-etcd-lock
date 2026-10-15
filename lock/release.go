@@ -24,6 +24,8 @@ func (l *EtcdLock) Release() error {
 	unlockErr := l.mutex.Unlock(ctx)
 	if unlockErr != nil {
 		unlockErr = errors.Wrap(ctx, unlockErr, "unlock lock")
+	} else {
+		l.metrics.recordRelease(ctx, writeLock)
 	}
 
 	var intentErr error

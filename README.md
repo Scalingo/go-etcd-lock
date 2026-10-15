@@ -83,6 +83,29 @@ if err != nil {
 defer writeLock.Release()
 ```
 
+## OpenTelemetry metrics
+
+Metrics are disabled by default. Initialize OpenTelemetry in your application's `main` before creating a locker. Call `otel.Init(ctx)` and defer the returned shutdown function:
+
+```go
+shutdown := otel.Init(ctx)
+defer shutdown()
+```
+
+Then enable metrics by passing the initialized meter provider to `lock.WithMetrics(provider)` when creating a locker. Passing `nil` uses the global OpenTelemetry meter provider. Instrument creation errors are logged and disable metrics for that locker without affecting locks.
+
+```go
+locker := lock.NewEtcdLocker(client, lock.WithMetrics(provider))
+```
+
+| Metric | Type | Meaning |
+| --- | --- | --- |
+| `etcd_lock.acquire.count` | Int64Counter | Successful lock acquisitions. |
+| `etcd_lock.release.count` | Int64Counter | Successful releases that effectively free a lock. |
+| `etcd_lock.acquire.duration` | Float64Histogram, seconds | Duration of successful acquisitions, including retries and waits. |
+
+All metrics carry `lock.type` (`read` or `write`). Lock keys are never recorded as attributes.
+
 ## Testing
 
 You need a etcd instance running on `localhost:2379`, then:
