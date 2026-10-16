@@ -2,6 +2,8 @@
 
 ## To be Released
 
+## v5.2.0
+
 * feat: add OpenTelemetry metrics
 
 ## v5.1.0
